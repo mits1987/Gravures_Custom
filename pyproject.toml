@@ -1,9 +1,9 @@
 [project]
 name = "gravures_custom"
 authors = [
-    { name = "kreativ", email = "info@kreativ.com"}
+    { name = "k", email = "i@k.com"}
 ]
-description = "Gravures Customization"
+description = "GC"
 requires-python = ">=3.10"
 readme = "README.md"
 dynamic = ["version"]

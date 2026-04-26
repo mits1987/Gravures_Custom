@@ -1,6 +1,6 @@
 ### Gravures Custom
 
-Gravures Customization
+GC
 
 ### Installation
 
