@@ -9,6 +9,32 @@ override_whitelisted_methods = {
     "frappe.utils.print_format.download_pdf": "gravures_custom.overrides.download_pdf"
 }
 
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "Client Script",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "Server Script",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "Property Setter",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "DocType",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "DocType",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+]
 
 # doctype_js = {
 #    "Delivery Note": "public/js/delivery_note.js"
