@@ -1,0 +1,18 @@
+[
+ {
+  "default_value": null,
+  "doc_type": "Sales Order",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "rate",
+  "is_system_generated": 0,
+  "modified": "2025-11-21 18:16:07.797007",
+  "module": "Gravures Custom",
+  "name": "Sales Order-rate-allow_on_submit",
+  "property": "allow_on_submit",
+  "property_type": "check",
+  "row_name": null,
+  "value": "1"
+ }
+]
