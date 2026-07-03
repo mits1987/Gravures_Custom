@@ -1,9 +1,51 @@
 app_name = "gravures_custom"
 app_title = "Gravures Custom"
-app_publisher = "k"
+app_publisher = "Mitesh"
 app_description = "GC"
-app_email = "i@k.com"
-app_license = "unlicense"
+app_email = "info@kreativ.com"
+app_license = "license"
+
+#override_whitelisted_methods = {
+#    "frappe.utils.print_format.download_pdf": "gravures_custom.overrides.download_pdf"
+# }
+
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "Client Script",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "Server Script",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "Property Setter",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "DocType",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+    {
+        "dt": "DocType",
+        "filters": [["module", "=", "Gravures Custom"]]
+    },
+]
+
+# doctype_js = {
+#    "Delivery Note": "public/js/delivery_note.js"
+# }
+
+# doc_events = {
+#    "Sales Order": {
+#        "onload": "gravures_custom.permissions.log_permission_check"
+#    }
+#   }
+
 
 # Apps
 # ------------------
@@ -27,6 +69,13 @@ app_license = "unlicense"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/gravures_custom/css/gravures_custom.css"
 # app_include_js = "/assets/gravures_custom/js/gravures_custom.js"
+
+# Login page environment marker: injects a "TESTING" banner on non-prod sites.
+# Detection runs in gravures_custom.login_marker.update_website_context which
+# keys off frappe.local.site (no DB state, restore-safe).
+update_website_context = [
+	"gravures_custom.login_marker.update_website_context",
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/gravures_custom/css/gravures_custom.css"
@@ -241,4 +290,12 @@ app_license = "unlicense"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+
+
+#doc_events = {
+#    "Email Queue": {
+#        "before_insert": "gravures_custom.overrides.email_queue.after_insert_email"
+#    }
+#}
+
 
