@@ -70,6 +70,13 @@ fixtures = [
 # app_include_css = "/assets/gravures_custom/css/gravures_custom.css"
 # app_include_js = "/assets/gravures_custom/js/gravures_custom.js"
 
+# Login page environment marker: injects a "TESTING" banner on non-prod sites.
+# Detection runs in gravures_custom.login_marker.update_website_context which
+# keys off frappe.local.site (no DB state, restore-safe).
+update_website_context = [
+	"gravures_custom.login_marker.update_website_context",
+]
+
 # include js, css files in header of web template
 # web_include_css = "/assets/gravures_custom/css/gravures_custom.css"
 # web_include_js = "/assets/gravures_custom/js/gravures_custom.js"
