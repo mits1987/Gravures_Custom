@@ -188,7 +188,16 @@ update_website_context = [
 
 doc_events = {
 	"Employee Checkin": {
-		"on_update": "gravures_custom.attendance.hooks.on_checkin_updated"
+		# on_change fires on BOTH insert (new document) and update (existing doc modified).
+		# Use on_change so creating a new checkin for an employee will trigger recalc
+		# without needing the user to also save again.
+		"on_change": "gravures_custom.attendance.hooks.on_checkin_updated"
+	},
+	"Salary Slip": {
+		# on_submit fires when a Salary Slip is finalized.
+		# This marks the employee-month's Employee Shift records as locked
+		# (creates an Employee Shift Lock so future corrections require unlock).
+		"on_submit": "gravures_custom.attendance.hooks.on_salary_slip_submit"
 	}
 }
 

@@ -48,3 +48,71 @@ def on_checkin_updated(doc, method=None):
     except Exception:
         # If enqueue fails (no worker available), run inline
         recalculate_for_checkin(doc.name)
+
+
+def on_salary_slip_submit(doc, method=None):
+    """Triggered when a Salary Slip is submitted/finalized.
+
+    Creates an Employee Shift Lock for the employee-month range, then
+    locks all Employee Shift records in that period so they cannot be
+    silently edited after payroll sign-off.
+
+    Idempotent: if a lock already exists (unlocked_at is NULL), it's a no-op.
+    """
+    if not doc.employee or not doc.start_date:
+        return
+
+    from gravures_custom.attendance.lock import EmployeeShiftLock
+    import datetime
+
+    year = doc.start_date.year
+    month = doc.start_date.month
+
+    # Check if lock already exists (idempotency)
+    existing = frappe.db.get_value(
+        "Employee Shift Lock",
+        [
+            ["employee", "=", doc.employee],
+            ["period_year", "=", year],
+            ["period_month", "=", month],
+            ["unlocked_at", "is", "not set"],
+        ],
+        "name",
+    )
+    if existing:
+        return  # already locked
+
+    # Create the lock
+    lock_doc = EmployeeShiftLock.lock_period(
+        employee=doc.employee,
+        year=year,
+        month=month,
+        salary_slip=doc.name,
+        locked_by=frappe.session.user,
+        reason=f"Salary Slip {doc.name} submitted for {year}-{month:02d}",
+    )
+
+    # Apply lock flag to all Employee Shift records in this period
+    period_start = datetime.date(year, month, 1)
+    if month == 12:
+        period_end = datetime.date(year + 1, 1, 1)
+    else:
+        period_end = datetime.date(year, month + 1, 1)
+
+    shifts = frappe.get_all(
+        "Employee Shift",
+        filters={
+            "employee": doc.employee,
+            "shift_date": [">=", period_start],
+        },
+        pluck="name",
+    )
+    for shift_name in shifts:
+        frappe.db.set_value(
+            "Employee Shift",
+            shift_name,
+            {"locked": 1, "lock_period": lock_doc.name},
+            update_modified=False,
+        )
+
+    frappe.db.commit()

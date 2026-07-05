@@ -1,0 +1,144 @@
+{
+  "doctype": "DocType",
+  "name": "Employee Shift Lock",
+  "module": "Gravures Custom",
+  "custom": 0,
+  "issingle": 0,
+  "istable": 0,
+  "title_field": "employee_name",
+  "autoname": "ESL-.YY.MM.-.#####",
+  "show_name_in_global_search": 1,
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "HR Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
+  ],
+  "fields": [
+    {
+      "fieldname": "naming_series",
+      "fieldtype": "Select",
+      "options": "ESL-.YY.MM.-",
+      "label": "Naming Series",
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "employee",
+      "fieldtype": "Link",
+      "options": "Employee",
+      "reqd": 1,
+      "label": "Employee"
+    },
+    {
+      "fieldname": "employee_name",
+      "fieldtype": "Read Only",
+      "fetch_from": "employee.employee_name",
+      "label": "Employee Name"
+    },
+    {
+      "fieldname": "period_year",
+      "fieldtype": "Int",
+      "reqd": 1,
+      "label": "Period Year",
+      "description": "Year of the locked period"
+    },
+    {
+      "fieldname": "period_month",
+      "fieldtype": "Int",
+      "reqd": 1,
+      "label": "Period Month (1-12)",
+      "description": "Month of the locked period (1=January)"
+    },
+    {
+      "fieldname": "salary_slip",
+      "fieldtype": "Link",
+      "options": "Salary Slip",
+      "label": "Salary Slip (optional)",
+      "description": "The salary slip that finalized this period"
+    },
+    {
+      "fieldname": "reason",
+      "fieldtype": "Small Text",
+      "default": "Salary Slip submitted",
+      "label": "Reason"
+    },
+    {
+      "fieldname": "column_break_status",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "locked_at",
+      "fieldtype": "Datetime",
+      "label": "Locked At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "locked_by",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Locked By",
+      "read_only": 1
+    },
+    {
+      "fieldname": "unlock_section",
+      "fieldtype": "Section Break",
+      "label": "Unlock"
+    },
+    {
+      "fieldname": "is_unlocked",
+      "fieldtype": "Check",
+      "default": "0",
+      "label": "Unlocked"
+    },
+    {
+      "fieldname": "unlocked_at",
+      "fieldtype": "Datetime",
+      "label": "Unlocked At"
+    },
+    {
+      "fieldname": "unlocked_by",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Unlocked By"
+    },
+    {
+      "fieldname": "unlock_reason",
+      "fieldtype": "Small Text",
+      "label": "Unlock Reason",
+      "mandatory_depends_on": "eval:doc.is_unlocked==1"
+    },
+    {
+      "fieldname": "snapshot_section",
+      "fieldtype": "Section Break",
+      "label": "Snapshot at Lock Time"
+    },
+    {
+      "fieldname": "snapshot_total_worked_seconds",
+      "fieldtype": "Int",
+      "read_only": 1,
+      "label": "Total Worked Seconds (snapshot)"
+    },
+    {
+      "fieldname": "snapshot_total_overtime_seconds",
+      "fieldtype": "Int",
+      "read_only": 1,
+      "label": "Total Overtime Seconds (snapshot)"
+    },
+    {
+      "fieldname": "snapshot_shift_count",
+      "fieldtype": "Int",
+      "read_only": 1,
+      "label": "Shift Count (snapshot)"
+    }
+  ]
+}

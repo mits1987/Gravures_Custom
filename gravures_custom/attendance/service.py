@@ -121,6 +121,25 @@ def create_shift_record(employee, paired_shift) -> str:
     return doc.name
 
 
+def has_active_lock(employee: str, year: int, month: int) -> bool:
+    """Return True if there is a non-unlocked Employee Shift Lock for this (emp, year, month).
+
+    An active lock has unlocked_at == None. Used by recalculate_period / recalculate_for_checkin
+    to refuse re-pairing if the period is payroll-finalized.
+    """
+    name = frappe.db.get_value(
+        "Employee Shift Lock",
+        [
+            ["employee", "=", employee],
+            ["period_year", "=", int(year)],
+            ["period_month", "=", int(month)],
+            ["unlocked_at", "is", "not set"],
+        ],
+        "name",
+    )
+    return bool(name)
+
+
 def recalculate_period(year: int, month: int, employee: str = None) -> dict:
     """
     Wipe & rebuild Employee Shift records for the given month.
@@ -139,6 +158,26 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
 
     standard_map = build_standard_hours_map()
     grouped = fetch_checkins_for_period(fetch_start, fetch_end, employee=employee)
+
+    # PRE-FLIGHT: refuse to delete/rewrite when Employee Shift Lock is active
+    target_emp_list = [employee] if employee else list(grouped.keys())
+    for emp_check in target_emp_list:
+        if has_active_lock(emp_check, year, month):
+            lock_name = frappe.db.get_value(
+                "Employee Shift Lock",
+                [
+                    ["employee", "=", emp_check],
+                    ["period_year", "=", int(year)],
+                    ["period_month", "=", int(month)],
+                    ["unlocked_at", "is", "not set"],
+                ],
+                "name",
+            )
+            frappe.throw(
+                f"Cannot recalculate: Employee Shift Lock '{lock_name}' for "
+                f"{emp_check} / {year}-{month:02d} is active. "
+                "Click 'Unlock Period' on the lock record with a reason to allow edits."
+            )
 
     deleted = delete_existing_shifts(year, month, employee=employee)
 

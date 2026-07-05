@@ -148,6 +148,25 @@
       "default": 0,
       "label": "Manual Correction Applied",
       "description": "Checked when user manually edits shift fields"
+    },
+    {
+      "fieldname": "section_break_lock",
+      "fieldtype": "Section Break",
+      "label": "Salary Lock"
+    },
+    {
+      "fieldname": "locked",
+      "fieldtype": "Check",
+      "default": "0",
+      "label": "Locked (by Salary Slip)",
+      "read_only": 1
+    },
+    {
+      "fieldname": "lock_period",
+      "fieldtype": "Link",
+      "options": "Employee Shift Lock",
+      "label": "Lock Reference",
+      "read_only": 1
     }
   ],
   "color": "#29CD41",
