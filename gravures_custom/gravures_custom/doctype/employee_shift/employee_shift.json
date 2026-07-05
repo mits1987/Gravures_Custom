@@ -1,0 +1,155 @@
+{
+  "doctype": "DocType",
+  "name": "Employee Shift",
+  "module": "Gravures Custom",
+  "custom": 0,
+  "issingle": 0,
+  "istable": 0,
+  "title_field": "employee_name",
+  "show_name_in_global_search": 1,
+  "image_field": "",
+  "autoname": "naming_series:",
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "HR Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
+  ],
+  "fields": [
+    {
+      "fieldname": "naming_series",
+      "fieldtype": "Select",
+      "options": "ES-.YYYY.-",
+      "label": "Naming Series",
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "employee",
+      "fieldtype": "Link",
+      "options": "Employee",
+      "reqd": 1,
+      "label": "Employee"
+    },
+    {
+      "fieldname": "employee_name",
+      "fieldtype": "Read Only",
+      "fetch_from": "employee.employee_name",
+      "label": "Employee Name"
+    },
+    {
+      "fieldname": "department",
+      "fieldtype": "Read Only",
+      "fetch_from": "employee.department",
+      "label": "Department"
+    },
+    {
+      "fieldname": "column_break_main",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "shift_date",
+      "fieldtype": "Date",
+      "reqd": 1,
+      "label": "Shift Date (IN date)",
+      "description": "Date the shift STARTED (used for month buckets)"
+    },
+    {
+      "fieldname": "check_in",
+      "fieldtype": "Datetime",
+      "label": "Check-In Time"
+    },
+    {
+      "fieldname": "check_out",
+      "fieldtype": "Datetime",
+      "label": "Check-Out Time"
+    },
+    {
+      "fieldname": "worked_hours",
+      "fieldtype": "Data",
+      "read_only": 1,
+      "label": "Worked (HH:MM)"
+    },
+    {
+      "fieldname": "overtime_hours",
+      "fieldtype": "Data",
+      "read_only": 1,
+      "label": "Overtime (HH:MM)"
+    },
+    {
+      "fieldname": "worked_seconds",
+      "fieldtype": "Int",
+      "read_only": 1,
+      "hidden": 1,
+      "label": "Worked Seconds"
+    },
+    {
+      "fieldname": "overtime_seconds",
+      "fieldtype": "Int",
+      "read_only": 1,
+      "hidden": 1,
+      "label": "Overtime Seconds"
+    },
+    {
+      "fieldname": "standard_hours",
+      "fieldtype": "Float",
+      "default": "8",
+      "label": "Standard Shift Hours"
+    },
+    {
+      "fieldname": "section_break_checkins",
+      "fieldtype": "Section Break",
+      "label": "Source Checkins"
+    },
+    {
+      "fieldname": "check_in_record",
+      "fieldtype": "Link",
+      "options": "Employee Checkin",
+      "label": "Check-In Record"
+    },
+    {
+      "fieldname": "check_out_record",
+      "fieldtype": "Link",
+      "options": "Employee Checkin",
+      "label": "Check-Out Record"
+    },
+    {
+      "fieldname": "column_break_status",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "options": "Paired\nMissing Check-Out\nAnomaly\nManual",
+      "default": "Paired",
+      "reqd": 1,
+      "bold": 1,
+      "label": "Status"
+    },
+    {
+      "fieldname": "anomaly_reason",
+      "fieldtype": "Select",
+      "options": "\nmissing_checkout\nprevious_month_carryover\nbreak_punch\nmanual_correction",
+      "read_only": 1,
+      "label": "Anomaly Reason"
+    },
+    {
+      "fieldname": "manual_correction",
+      "fieldtype": "Check",
+      "default": 0,
+      "label": "Manual Correction Applied",
+      "description": "Checked when user manually edits shift fields"
+    }
+  ],
+  "color": "#29CD41",
+  "indicator_color": "green"
+}

@@ -186,13 +186,11 @@ update_website_context = [
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Employee Checkin": {
+		"on_update": "gravures_custom.attendance.hooks.on_checkin_updated"
+	}
+}
 
 # Scheduled Tasks
 # ---------------

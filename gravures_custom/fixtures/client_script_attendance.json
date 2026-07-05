@@ -1,0 +1,13 @@
+[
+  {
+    "doctype": "Client Script",
+    "name": "Employee Shift List Indicators",
+    "dt": "Client Script",
+    "script_type": "List",
+    "applied_to": "Employee Shift",
+    "view": "List",
+    "module": "Gravures Custom",
+    "enabled": 1,
+    "script": "// Row color highlighting + Recalculate Month button\nfrappe.listview_settings['Employee Shift'] = {\n    refresh(listview) {\n        listview.wrapper.find('.list-row').each(function() {\n            const row = $(this);\n            const indicator = row.find('.indicator-pill').text().trim();\n            if (indicator === 'Anomaly' || indicator.includes('Break punch')) {\n                row.css('background-color', '#ffe6e6');\n            } else if (indicator === 'Missing Check-Out' || indicator.includes('Unpaired')) {\n                row.css('background-color', '#fff4e6');\n            } else if (indicator === 'Paired') {\n                row.css('background-color', '#e6f9ed');\n            } else if (indicator === 'Manual') {\n                row.css('background-color', '#e6eef9');\n            }\n        });\n    }\n};\n"
+  }
+]

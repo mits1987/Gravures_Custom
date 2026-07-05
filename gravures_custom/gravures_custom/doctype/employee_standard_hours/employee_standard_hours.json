@@ -1,0 +1,61 @@
+{
+  "doctype": "DocType",
+  "name": "Employee Standard Hours",
+  "module": "Gravures Custom",
+  "custom": 0,
+  "issingle": 0,
+  "istable": 0,
+  "title_field": "employee_name",
+  "autoname": "field:employee",
+  "show_name_in_global_search": 1,
+  "permissions": [
+    {
+      "role": "System Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "HR Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
+  ],
+  "fields": [
+    {
+      "fieldname": "employee",
+      "fieldtype": "Link",
+      "options": "Employee",
+      "reqd": 1,
+      "label": "Employee"
+    },
+    {
+      "fieldname": "employee_name",
+      "fieldtype": "Read Only",
+      "fetch_from": "employee.employee_name",
+      "label": "Employee Name"
+    },
+    {
+      "fieldname": "standard_hours",
+      "fieldtype": "Float",
+      "default": "8",
+      "reqd": 1,
+      "label": "Standard Shift Hours",
+      "description": "Default 8. Used to calculate overtime"
+    },
+    {
+      "fieldname": "effective_from",
+      "fieldtype": "Date",
+      "label": "Effective From",
+      "description": "Leave blank to apply always"
+    },
+    {
+      "fieldname": "notes",
+      "fieldtype": "Small Text",
+      "label": "Notes"
+    }
+  ]
+}
