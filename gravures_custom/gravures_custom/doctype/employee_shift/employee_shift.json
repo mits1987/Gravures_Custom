@@ -38,13 +38,16 @@
       "fieldtype": "Link",
       "options": "Employee",
       "reqd": 1,
-      "label": "Employee"
+      "label": "Employee",
+      "in_list_view": 1,
+      "in_standard_filter": 1
     },
     {
       "fieldname": "employee_name",
       "fieldtype": "Read Only",
       "fetch_from": "employee.employee_name",
-      "label": "Employee Name"
+      "label": "Employee Name",
+      "in_list_view": 1
     },
     {
       "fieldname": "department",
@@ -61,23 +64,28 @@
       "fieldtype": "Date",
       "reqd": 1,
       "label": "Shift Date (IN date)",
-      "description": "Date the shift STARTED (used for month buckets)"
+      "description": "Date the shift STARTED (used for month buckets)",
+      "in_list_view": 1,
+      "in_standard_filter": 1
     },
     {
       "fieldname": "check_in",
       "fieldtype": "Datetime",
-      "label": "Check-In Time"
+      "label": "Check-In Time",
+      "in_list_view": 1
     },
     {
       "fieldname": "check_out",
       "fieldtype": "Datetime",
-      "label": "Check-Out Time"
+      "label": "Check-Out Time",
+      "in_list_view": 1
     },
     {
       "fieldname": "worked_hours",
       "fieldtype": "Data",
       "read_only": 1,
-      "label": "Worked (HH:MM)"
+      "label": "Worked (HH:MM)",
+      "in_list_view": 1
     },
     {
       "fieldname": "overtime_hours",
@@ -133,7 +141,9 @@
       "default": "Paired",
       "reqd": 1,
       "bold": 1,
-      "label": "Status"
+      "label": "Status",
+      "in_list_view": 1,
+      "in_standard_filter": 1
     },
     {
       "fieldname": "anomaly_reason",
@@ -160,7 +170,8 @@
       "default": "0",
       "label": "Locked (by Salary Slip)",
       "read_only": 1,
-      "in_list_view": 1
+      "in_list_view": 1,
+      "in_standard_filter": 1
     },
     {
       "fieldname": "lock_period",
@@ -174,6 +185,6 @@
   "indicator_color": "green",
   "listview_settings": {
     "show_icon_row": 0,
-    "get_indicator": "gravures_custom.doctype.employee_shift.employee_shift.get_indicator"
+    "get_indicator": "gravures_custom.gravures_custom.doctype.employee_shift.employee_shift.get_indicator"
   }
 }
