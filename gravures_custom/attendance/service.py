@@ -20,24 +20,16 @@ DEFAULT_STANDARD_SECONDS = 8 * 3600
 
 
 def build_standard_hours_map() -> dict:
-    """Return {employee_code: standard_seconds} from Employee Standard Hours doctype.
+    """Return {employee_doc_name: standard_seconds} from Employee Standard Hours.
 
-    Key is the employee's `employee` field (ZKTeco code), not the document name,
-    because Employee Checkin records reference employees by their code via
-    the `employee` field. This ensures lookups match regardless of naming format.
+    Key is the Employee document name (HR-EMP-XXXXX), not the ZKTeco code,
+    because the translation to codes happens at lookup time in recalculate_period.
     """
     rows = frappe.db.get_all(
         "Employee Standard Hours",
         fields=["employee", "standard_hours"],
     )
-    result = {}
-    for r in rows:
-        # r["employee"] is the Employee doc name (HR-EMP-XXXXX)
-        # Translate to the employee's code (ZKTeco code)
-        emp_code = frappe.db.get_value("Employee", r["employee"], "employee")
-        if emp_code:
-            result[emp_code] = seconds_from_hours(r["standard_hours"])
-    return result
+    return {r["employee"]: seconds_from_hours(r["standard_hours"]) for r in rows}
 
 
 def default_standard_seconds(standard_map: dict, employee: str) -> int:
@@ -94,14 +86,25 @@ def _serialize_checkin_for_pairing(checkins):
 
 
 def delete_existing_shifts(year: int, month: int, employee: str = None) -> int:
-    """Wipe Employee Shift rows for the period before recalc. Returns count deleted."""
+    """Wipe Employee Shift rows for the period before recalc. Returns count deleted.
+
+    Uses >= / < comparison with a ±2 day window to catch cross-midnight shifts.
+    """
     period_start = datetime(year, month, 1)
     period_end = (
         datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
     )
-    filters = {"shift_date": ["between", [period_start.date(), (period_end - timedelta(days=1)).date()]]}
+    # Extend window ±2 days to match fetch_checkins_for_period window
+    fetch_start = period_start - timedelta(days=2)
+    fetch_end = period_end + timedelta(days=2)
+
+    filters = [
+        ["shift_date", ">=", fetch_start.date()],
+        ["shift_date", "<", fetch_end.date()],
+    ]
     if employee:
-        filters["employee"] = employee
+        filters = [["employee", "=", employee]] + filters
+
     names = frappe.db.get_all("Employee Shift", filters=filters, pluck="name")
     if not names:
         return 0
@@ -171,13 +174,6 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
     standard_map = build_standard_hours_map()
     grouped = fetch_checkins_for_period(fetch_start, fetch_end, employee=employee)
 
-    # Build a map: Employee doc name → ZKTeco employee code
-    # (Employee Checkin Link fields store doc name, but standard_map uses codes)
-    emp_name_to_code = {}
-    for emp_name in list(grouped.keys()):
-        code = frappe.db.get_value("Employee", emp_name, "employee")
-        emp_name_to_code[emp_name] = code or emp_name
-
     # PRE-FLIGHT: refuse to delete/rewrite when Employee Shift Lock is active
     target_emp_list = [employee] if employee else list(grouped.keys())
     for emp_check in target_emp_list:
@@ -206,9 +202,7 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
 
     for emp, checkins in grouped.items():
         emps_processed += 1
-        # Emp name → code for standard hours lookup
-        emp_code = emp_name_to_code.get(emp, emp)
-        standard = default_standard_seconds(standard_map, emp_code)
+        standard = default_standard_seconds(standard_map, emp)
         sorted_ck = sorted(checkins, key=lambda c: c["time"])
         prepared = _serialize_checkin_for_pairing(sorted_ck)
         paired, anomalies = pair_checkins(
