@@ -20,12 +20,24 @@ DEFAULT_STANDARD_SECONDS = 8 * 3600
 
 
 def build_standard_hours_map() -> dict:
-    """Return {employee_id: standard_seconds} from Employee Standard Hours doctype."""
+    """Return {employee_code: standard_seconds} from Employee Standard Hours doctype.
+
+    Key is the employee's `employee` field (ZKTeco code), not the document name,
+    because Employee Checkin records reference employees by their code via
+    the `employee` field. This ensures lookups match regardless of naming format.
+    """
     rows = frappe.db.get_all(
         "Employee Standard Hours",
         fields=["employee", "standard_hours"],
     )
-    return {r["employee"]: seconds_from_hours(r["standard_hours"]) for r in rows}
+    result = {}
+    for r in rows:
+        # r["employee"] is the Employee doc name (HR-EMP-XXXXX)
+        # Translate to the employee's code (ZKTeco code)
+        emp_code = frappe.db.get_value("Employee", r["employee"], "employee")
+        if emp_code:
+            result[emp_code] = seconds_from_hours(r["standard_hours"])
+    return result
 
 
 def default_standard_seconds(standard_map: dict, employee: str) -> int:
@@ -159,6 +171,13 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
     standard_map = build_standard_hours_map()
     grouped = fetch_checkins_for_period(fetch_start, fetch_end, employee=employee)
 
+    # Build a map: Employee doc name → ZKTeco employee code
+    # (Employee Checkin Link fields store doc name, but standard_map uses codes)
+    emp_name_to_code = {}
+    for emp_name in list(grouped.keys()):
+        code = frappe.db.get_value("Employee", emp_name, "employee")
+        emp_name_to_code[emp_name] = code or emp_name
+
     # PRE-FLIGHT: refuse to delete/rewrite when Employee Shift Lock is active
     target_emp_list = [employee] if employee else list(grouped.keys())
     for emp_check in target_emp_list:
@@ -187,7 +206,9 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
 
     for emp, checkins in grouped.items():
         emps_processed += 1
-        standard = default_standard_seconds(standard_map, emp)
+        # Emp name → code for standard hours lookup
+        emp_code = emp_name_to_code.get(emp, emp)
+        standard = default_standard_seconds(standard_map, emp_code)
         sorted_ck = sorted(checkins, key=lambda c: c["time"])
         prepared = _serialize_checkin_for_pairing(sorted_ck)
         paired, anomalies = pair_checkins(
@@ -212,6 +233,7 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
                 "check_out": a["time"] if a.get("log_type") == "OUT" else None,
                 "worked_hours": "",
                 "overtime_hours": "",
+                "standard_hours": standard / 3600.0 if standard else 8,
                 "status": "Anomaly",
                 "anomaly_reason": _map_anomaly_reason(a.get("reason", "")),
                 "check_in_record": a.get("checkin_name") if a.get("log_type") == "IN" else None,

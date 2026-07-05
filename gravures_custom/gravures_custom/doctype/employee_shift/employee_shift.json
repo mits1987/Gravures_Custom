@@ -53,7 +53,8 @@
       "fieldname": "department",
       "fieldtype": "Read Only",
       "fetch_from": "employee.department",
-      "label": "Department"
+      "label": "Department",
+      "in_list_view": 1
     },
     {
       "fieldname": "column_break_main",
@@ -91,7 +92,8 @@
       "fieldname": "overtime_hours",
       "fieldtype": "Data",
       "read_only": 1,
-      "label": "Overtime (HH:MM)"
+      "label": "Overtime (HH:MM)",
+      "in_list_view": 1
     },
     {
       "fieldname": "worked_seconds",
@@ -111,7 +113,8 @@
       "fieldname": "standard_hours",
       "fieldtype": "Float",
       "default": "8",
-      "label": "Standard Shift Hours"
+      "label": "Standard Shift Hours",
+      "in_list_view": 1
     },
     {
       "fieldname": "section_break_checkins",
@@ -184,7 +187,7 @@
   "color": "#29CD41",
   "indicator_color": "green",
   "listview_settings": {
-    "show_icon_row": 0,
+    "show_icon_row": 1,
     "get_indicator": "gravures_custom.gravures_custom.doctype.employee_shift.employee_shift.get_indicator"
   }
 }
