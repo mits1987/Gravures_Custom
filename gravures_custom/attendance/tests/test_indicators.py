@@ -35,6 +35,9 @@ class _Stub:
     def __init__(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)
+        # Default: locked=False (all tests except lock-specific ones)
+        if "locked" not in kw:
+            self.locked = 0
 
 
 class TestGetIndicator(unittest.TestCase):
@@ -79,5 +82,18 @@ class TestGetIndicator(unittest.TestCase):
         self.assertEqual(color, "blue")
 
 
+
+    def test_locked_is_grey(self):
+        """Locked shifts should return grey indicator regardless of other status."""
+        result = self.mod.get_indicator(_Stub(status="Paired", anomaly_reason="", manual_correction=0, locked=1))
+        label, color, _ = result
+        self.assertEqual(color, "grey")
+        self.assertIn("Locked", label)
+
+    def test_locked_takes_priority_break_punch(self):
+        """Even if anomaly_reason is break_punch, locked makes it grey."""
+        result = self.mod.get_indicator(_Stub(status="Anomaly", anomaly_reason="break_punch", manual_correction=0, locked=1))
+        label, color, _ = result
+        self.assertEqual(color, "grey")
 if __name__ == "__main__":
     unittest.main()

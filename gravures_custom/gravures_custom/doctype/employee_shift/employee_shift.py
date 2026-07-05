@@ -40,11 +40,17 @@ class EmployeeShift(Document):
 
 def get_indicator(doc):
     """Color indicators per user request:
+        - GREY:   Locked by Salary Slip (payroll finalized)
         - RED:    Break punch anomaly (incorrect type selected)
         - ORANGE: Unpaired / carryover (needs review)
         - GREEN:  Clean paired shift
         - BLUE:   Manual correction applied
+
+    Locked takes highest priority — once payroll has used this data,
+    all other status indicators are secondary.
     """
+    if doc.locked:
+        return ("Locked - payroll finalized", "grey", "locked")
     if doc.manual_correction:
         return ("Manual", "blue", "manual_correction")
     if doc.anomaly_reason == "break_punch":

@@ -159,7 +159,8 @@
       "fieldtype": "Check",
       "default": "0",
       "label": "Locked (by Salary Slip)",
-      "read_only": 1
+      "read_only": 1,
+      "in_list_view": 1
     },
     {
       "fieldname": "lock_period",
@@ -170,5 +171,9 @@
     }
   ],
   "color": "#29CD41",
-  "indicator_color": "green"
+  "indicator_color": "green",
+  "listview_settings": {
+    "show_icon_row": 0,
+    "get_indicator": "gravures_custom.doctype.employee_shift.employee_shift.get_indicator"
+  }
 }
