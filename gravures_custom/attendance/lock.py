@@ -3,13 +3,47 @@
 Lock is created in gravures_custom.attendance.lock module. The companion
 doctype JSON lives in gravures_custom/gravures_custom/doctype/employee_shift_lock .
 """
+import datetime
+
 import frappe
 from frappe.model.document import Document
 from frappe.utils import now_datetime, get_datetime
 
 
+def release_shift_flags(employee: str, year: int, month: int) -> int:
+    """Clear locked/lock_period on all Employee Shift rows of one employee-month.
+
+    Shared by the unlock API and the Employee Shift Lock controller (UI
+    checkbox). Returns the number of shifts released. Bounded to the month:
+    other months' locks must stay untouched.
+    """
+    period_start = datetime.date(int(year), int(month), 1)
+    if int(month) == 12:
+        period_end = datetime.date(int(year) + 1, 1, 1)
+    else:
+        period_end = datetime.date(int(year), int(month) + 1, 1)
+
+    shifts = frappe.get_all(
+        "Employee Shift",
+        filters=[
+            ["employee", "=", employee],
+            ["shift_date", ">=", period_start],
+            ["shift_date", "<", period_end],
+            ["locked", "=", 1],
+        ],
+        pluck="name",
+    )
+    for shift_name in shifts:
+        frappe.db.set_value(
+            "Employee Shift",
+            shift_name,
+            {"locked": 0, "lock_period": None},
+            update_modified=False,
+        )
+    return len(shifts)
+
+
 class EmployeeShiftLock(Document):
-    pass
 
     @staticmethod
     def lock_period(employee, year, month, salary_slip, locked_by, reason="Salary Slip submitted"):

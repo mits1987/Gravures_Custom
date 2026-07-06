@@ -36,6 +36,13 @@ def on_checkin_updated(doc, method=None):
         return
     setattr(doc, "_gravures_attendance_recalc_triggered", True)
 
+    # Deduplicate per employee-month: a 5-minute device sync inserts many
+    # checkins for the same employee, and each full-month rebuild is
+    # idempotent — one queued job per (employee, month) is enough. Without
+    # this, N punches enqueue N identical rebuilds that can also race each
+    # other on parallel workers (duplicate Employee Shift rows).
+    from frappe.utils import get_datetime
+    t = get_datetime(doc.time)
     try:
         enqueue(
             "gravures_custom.attendance.service.recalculate_for_checkin",
@@ -44,6 +51,8 @@ def on_checkin_updated(doc, method=None):
             checkin_name=doc.name,
             now=False,
             enqueue_after_commit=True,
+            deduplicate=True,
+            job_id=f"gravures-shift-recalc-{doc.employee}-{t.year}-{t.month:02d}",
         )
     except Exception:
         # If enqueue fails (no worker available), run inline
@@ -63,10 +72,12 @@ def on_salary_slip_submit(doc, method=None):
         return
 
     from gravures_custom.attendance.lock import EmployeeShiftLock
+    from frappe.utils import getdate
     import datetime
 
-    year = doc.start_date.year
-    month = doc.start_date.month
+    start_date = getdate(doc.start_date)
+    year = start_date.year
+    month = start_date.month
 
     # Check if lock already exists (idempotency)
     existing = frappe.db.get_value(
@@ -101,10 +112,11 @@ def on_salary_slip_submit(doc, method=None):
 
     shifts = frappe.get_all(
         "Employee Shift",
-        filters={
-            "employee": doc.employee,
-            "shift_date": [">=", period_start],
-        },
+        filters=[
+            ["employee", "=", doc.employee],
+            ["shift_date", ">=", period_start],
+            ["shift_date", "<", period_end],
+        ],
         pluck="name",
     )
     for shift_name in shifts:

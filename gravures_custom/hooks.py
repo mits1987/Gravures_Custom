@@ -30,10 +30,6 @@ fixtures = [
         "dt": "DocType",
         "filters": [["module", "=", "Gravures Custom"]]
     },
-    {
-        "dt": "DocType",
-        "filters": [["module", "=", "Gravures Custom"]]
-    },
 ]
 
 # doctype_js = {

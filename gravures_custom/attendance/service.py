@@ -85,32 +85,37 @@ def _serialize_checkin_for_pairing(checkins):
     return out
 
 
-def delete_existing_shifts(year: int, month: int, employee: str = None) -> int:
+def delete_existing_shifts(year: int, month: int, employee: str = None,
+                           exclude_employees: set = None) -> int:
     """Wipe Employee Shift rows for the period before recalc. Returns count deleted.
 
-    Uses >= / < comparison with a ±2 day window to catch cross-midnight shifts.
+    Deletes ONLY shifts dated inside the target month. shift_date is always the
+    check-in date and pairs are bucketed by check-in month, so the ±2 day fetch
+    window (needed to *pair* cross-month checkins) must never widen the delete —
+    otherwise a May recalc destroys June 1-2 shifts it will not recreate.
+
+    No commit here: recalculate_period commits once after the rebuild, so a
+    failed rebuild rolls the deletes back instead of losing the month.
     """
     period_start = datetime(year, month, 1)
     period_end = (
         datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
     )
-    # Extend window ±2 days to match fetch_checkins_for_period window
-    fetch_start = period_start - timedelta(days=2)
-    fetch_end = period_end + timedelta(days=2)
 
     filters = [
-        ["shift_date", ">=", fetch_start.date()],
-        ["shift_date", "<", fetch_end.date()],
+        ["shift_date", ">=", period_start.date()],
+        ["shift_date", "<", period_end.date()],
     ]
     if employee:
         filters = [["employee", "=", employee]] + filters
+    if exclude_employees:
+        filters.append(["employee", "not in", list(exclude_employees)])
 
     names = frappe.db.get_all("Employee Shift", filters=filters, pluck="name")
     if not names:
         return 0
     for n in names:
         frappe.delete_doc("Employee Shift", n, ignore_permissions=True)
-    frappe.db.commit()
     return len(names)
 
 
@@ -174,33 +179,36 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
     standard_map = build_standard_hours_map()
     grouped = fetch_checkins_for_period(fetch_start, fetch_end, employee=employee)
 
-    # PRE-FLIGHT: refuse to delete/rewrite when Employee Shift Lock is active
-    target_emp_list = [employee] if employee else list(grouped.keys())
-    for emp_check in target_emp_list:
-        if has_active_lock(emp_check, year, month):
-            lock_name = frappe.db.get_value(
-                "Employee Shift Lock",
-                [
-                    ["employee", "=", emp_check],
-                    ["period_year", "=", int(year)],
-                    ["period_month", "=", int(month)],
-                    ["unlocked_at", "is", "not set"],
-                ],
-                "name",
-            )
-            frappe.throw(
-                f"Cannot recalculate: Employee Shift Lock '{lock_name}' for "
-                f"{emp_check} / {year}-{month:02d} is active. "
-                "Click 'Unlock Period' on the lock record with a reason to allow edits."
-            )
+    # PRE-FLIGHT: never delete/rewrite a payroll-locked employee-month.
+    # Single-employee recalc: throw (the caller explicitly asked for this employee).
+    # Bulk recalc: skip locked employees so one payroll lock doesn't block everyone.
+    locked_emps = set(frappe.db.get_all(
+        "Employee Shift Lock",
+        filters=[
+            ["period_year", "=", int(year)],
+            ["period_month", "=", int(month)],
+            ["unlocked_at", "is", "not set"],
+        ],
+        pluck="employee",
+    ))
+    if employee and employee in locked_emps:
+        frappe.throw(
+            f"Cannot recalculate: an Employee Shift Lock for "
+            f"{employee} / {year}-{month:02d} is active. "
+            "Click 'Unlock Period' on the lock record with a reason to allow edits."
+        )
 
-    deleted = delete_existing_shifts(year, month, employee=employee)
+    deleted = delete_existing_shifts(
+        year, month, employee=employee, exclude_employees=locked_emps
+    )
 
     total_paired = 0
     total_anomalies = 0
     emps_processed = 0
 
     for emp, checkins in grouped.items():
+        if emp in locked_emps:
+            continue
         emps_processed += 1
         standard = default_standard_seconds(standard_map, emp)
         sorted_ck = sorted(checkins, key=lambda c: c["time"])
@@ -217,8 +225,14 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
             create_shift_record(emp, p)
             total_paired += 1
 
-        # Anomalies: persist as separate Employee Shift with status = "Anomaly"
+        # Anomalies: persist as separate Employee Shift with status = "Anomaly".
+        # Only for the target month — checkins from the ±2 day fetch window
+        # belong to the adjacent month's recalc, and persisting them here
+        # creates phantom anomaly rows at month edges.
         for a in anomalies:
+            a_time = a["time"]
+            if not (a_time.year == year and a_time.month == month):
+                continue
             doc = frappe.get_doc({
                 "doctype": "Employee Shift",
                 "employee": emp,
@@ -242,6 +256,7 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
         "paired": total_paired,
         "anomalies": total_anomalies,
         "deleted": deleted,
+        "skipped_locked": sorted(locked_emps) if not employee else [],
         "period": f"{year}-{month:02d}",
     }
 
@@ -266,12 +281,16 @@ def recalculate_for_checkin(checkin_name: str) -> dict:
     """Called after Employee Checkin save / edit. Wipes & rebuilds the affected employee's
     shifts for the month containing that checkin (and previous month, because of carryovers)."""
     c = frappe.get_doc("Employee Checkin", checkin_name)
-    t = c.time
+    t = get_datetime(c.time)
     year, month = t.year, t.month
     result = recalculate_employee_for_period(c.employee, year, month)
-    # also re-process previous month for carryover that may now belong to it
-    if month > 1:
-        prev = recalculate_employee_for_period(c.employee, year, month - 1)
+    # also re-process previous month for carryover that may now belong to it —
+    # unless that month is payroll-locked (normal after month-end); the checkin
+    # being edited belongs to the current month, so just skip quietly instead
+    # of failing the background job.
+    prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
+    if has_active_lock(c.employee, prev_year, prev_month):
+        prev = {"skipped": "locked", "period": f"{prev_year}-{prev_month:02d}"}
     else:
-        prev = recalculate_employee_for_period(c.employee, year - 1, 12)
+        prev = recalculate_employee_for_period(c.employee, prev_year, prev_month)
     return {"current": result, "previous": prev}

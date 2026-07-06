@@ -220,9 +220,5 @@
     }
   ],
   "color": "#29CD41",
-  "indicator_color": "green",
-  "listview_settings": {
-    "show_icon_row": 1,
-    "get_indicator": "gravures_custom.gravures_custom.doctype.employee_shift.employee_shift.get_indicator"
-  }
+  "indicator_color": "green"
 }

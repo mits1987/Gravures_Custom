@@ -1,0 +1,21 @@
+{
+ "add_total_row": 0,
+ "columns": [],
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [],
+ "is_standard": "Yes",
+ "letterhead": null,
+ "module": "Gravures Custom",
+ "name": "Employee Shift Summary",
+ "prepared_report": 0,
+ "ref_doctype": "Employee Shift",
+ "report_name": "Employee Shift Summary",
+ "report_type": "Script Report",
+ "roles": [
+  {"role": "System Manager"},
+  {"role": "HR Manager"},
+  {"role": "HR User"}
+ ]
+}

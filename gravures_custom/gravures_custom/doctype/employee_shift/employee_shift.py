@@ -36,25 +36,3 @@ class EmployeeShift(Document):
             "Click 'Unlock Period' on the lock record to allow edits. "
             "An audit-reason note is required."
         )
-
-
-def get_indicator(doc):
-    """Color indicators per user request:
-        - GREY:   Locked by Salary Slip (payroll finalized)
-        - RED:    Break punch anomaly (incorrect type selected)
-        - ORANGE: Unpaired / carryover (needs review)
-        - GREEN:  Clean paired shift
-        - BLUE:   Manual correction applied
-
-    Locked takes highest priority — once payroll has used this data,
-    all other status indicators are secondary.
-    """
-    if doc.locked:
-        return ("Locked - payroll finalized", "grey", "locked")
-    if doc.manual_correction:
-        return ("Manual", "blue", "manual_correction")
-    if doc.anomaly_reason == "break_punch":
-        return ("Break punch - needs correction", "red", "anomaly")
-    if doc.anomaly_reason in ("missing_checkout", "previous_month_carryover"):
-        return ("Unpaired - review needed", "orange", "anomaly")
-    return ("Paired", "green", "ok")

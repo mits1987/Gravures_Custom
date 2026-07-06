@@ -34,13 +34,27 @@ class TestWhitelistedEndpoints(unittest.TestCase):
 
     def test_recalculate_employee_calls_service(self):
         from gravures_custom.attendance.api import recalculate_employee
-        with patch(
-            "gravures_custom.attendance.api.recalculate_employee_for_period",
-            return_value={"paired": 5, "anomalies": 0, "employees": 1, "deleted": 2, "period": "2026-05"},
-        ) as mock:
-            result = recalculate_employee(emp="HR-EMP-00037", year=2026, month=5)
+        with patch("gravures_custom.attendance.api.frappe", MagicMock()):
+            with patch(
+                "gravures_custom.attendance.api.recalculate_employee_for_period",
+                return_value={"paired": 5, "anomalies": 0, "employees": 1, "deleted": 2, "period": "2026-05"},
+            ) as mock:
+                result = recalculate_employee(emp="HR-EMP-00037", year=2026, month=5)
         mock.assert_called_once_with(emp_id="HR-EMP-00037", year=2026, month=5)
         self.assertEqual(result["paired"], 5)
+
+    def test_recalculate_for_checkin_delegates_not_recurses(self):
+        """Regression: the whitelisted endpoint used to shadow the service
+        import with its own name and call itself (infinite recursion)."""
+        from gravures_custom.attendance import api
+        with patch("gravures_custom.attendance.api.frappe", MagicMock()):
+            with patch(
+                "gravures_custom.attendance.api._service_recalculate_for_checkin",
+                return_value={"ok": True},
+            ) as mock:
+                result = api.recalculate_for_checkin(checkin_name="CHK-1")
+        mock.assert_called_once_with("CHK-1")
+        self.assertEqual(result, {"ok": True})
 
 
 if __name__ == "__main__":

@@ -1,7 +1,18 @@
 // Employee Shift list view — row coloring + clickable check-in/out times.
 // Registered via hooks.py doctype_list_js.
+//
+// Clicking a Check-In or Check-Out TIME opens the underlying Employee Checkin
+// record, so a wrong punch (IN selected instead of OUT, or vice versa) can be
+// corrected right there. Shifts rebuild automatically a few seconds after the
+// checkin is saved.
 
 frappe.listview_settings['Employee Shift'] = frappe.listview_settings['Employee Shift'] || {};
+
+// Ensure the fields we need are always fetched for the list rows
+frappe.listview_settings['Employee Shift'].add_fields = [
+    'status', 'locked', 'anomaly_reason', 'manual_correction',
+    'check_in_record', 'check_out_record',
+];
 
 // ============================================================================
 // INDICATOR — status pill color on each row
@@ -38,36 +49,24 @@ frappe.listview_settings['Employee Shift'].refresh = function(listview) {
             var docname = row.attr('data-name');
             if (!docname) return;
 
-            // --- Row background coloring ---
-            var statusEl = row.find('[data-fieldname="status"]');
-            var lockedEl = row.find('[data-fieldname="locked"]');
-            var status = statusEl.length ? statusEl.text().trim() : '';
-            var locked = lockedEl.data('value');
+            var doc = (listview.data || []).find(function(d) { return d.name === docname; }) || {};
 
-            if (locked === '1') {
+            // --- Row background coloring ---
+            if (doc.locked) {
                 row.css('background-color', '#d3d3d3');
-            } else if (status === 'Anomaly' || status === 'Break punch') {
+            } else if (doc.anomaly_reason === 'break_punch') {
                 row.css('background-color', '#ffe6e6');
-            } else if (status === 'Missing Check-Out') {
+            } else if (doc.status === 'Anomaly' || doc.status === 'Missing Check-Out') {
                 row.css('background-color', '#fff4e6');
-            } else if (status === 'Paired') {
-                row.css('background-color', '#e6f9ed');
-            } else if (status === 'Manual') {
+            } else if (doc.manual_correction) {
                 row.css('background-color', '#e6eef9');
+            } else if (doc.status === 'Paired') {
+                row.css('background-color', '#e6f9ed');
             }
 
-            // --- Make check-in time clickable → opens Employee Shift ---
-            make_time_clickable(row, docname, 'check_in');
-
-            // --- Make check-out time clickable → opens Employee Shift ---
-            make_time_clickable(row, docname, 'check_out');
-
-            // --- Convert check_in_record / check_out_record link cells ---
-            // These are Link→Employee Checkin fields. By default clicking them
-            // navigates to the Employee Checkin doc. Instead, make them also
-            // navigate to the Employee Shift record.
-            make_record_link_redirect(row, docname, 'check_in_record');
-            make_record_link_redirect(row, docname, 'check_out_record');
+            // --- Clickable times → open the source Employee Checkin record ---
+            make_time_open_checkin(row, 'check_in', doc.check_in_record);
+            make_time_open_checkin(row, 'check_out', doc.check_out_record);
         });
     }, 300);
 };
@@ -76,10 +75,11 @@ frappe.listview_settings['Employee Shift'].refresh = function(listview) {
 // HELPERS
 // ============================================================================
 
-/** Make a Datetime cell act as a link to the Employee Shift form */
-function make_time_clickable(row, docname, fieldname) {
+/** Make a Datetime cell open the linked Employee Checkin (to fix wrong punches) */
+function make_time_open_checkin(row, fieldname, checkin_name) {
     var cell = row.find('[data-fieldname="' + fieldname + '"]');
     if (!cell.length) return;
+    if (!checkin_name) return;   // anomaly rows without a source checkin: leave as plain text
 
     var text = cell.text().trim();
     if (!text) return;
@@ -88,22 +88,11 @@ function make_time_clickable(row, docname, fieldname) {
         'cursor': 'pointer',
         'color': '#2d7ff9',
         'text-decoration': 'underline'
-    }).attr('title', __('Open Employee Shift'));
+    }).attr('title', __('Open Employee Checkin to correct this punch'));
 
-    // Remove any existing click handler before adding new one
     cell.off('click.timeclick').on('click.timeclick', function(e) {
         e.stopPropagation();
-        frappe.set_route('Form', 'Employee Shift', docname);
-    });
-}
-
-/** Redirect a Link cell to open the Employee Shift instead of the linked doc */
-function make_record_link_redirect(row, docname, fieldname) {
-    var cell = row.find('[data-fieldname="' + fieldname + '"]');
-    if (!cell.length) return;
-
-    cell.off('click.recordredirect').on('click.recordredirect', function(e) {
-        e.stopPropagation();
-        frappe.set_route('Form', 'Employee Shift', docname);
+        e.preventDefault();
+        frappe.set_route('Form', 'Employee Checkin', checkin_name);
     });
 }

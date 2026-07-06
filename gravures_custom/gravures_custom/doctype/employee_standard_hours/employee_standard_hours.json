@@ -47,6 +47,13 @@
       "description": "Default 8. Used to calculate overtime"
     },
     {
+      "fieldname": "overtime_rate",
+      "fieldtype": "Currency",
+      "default": "0",
+      "label": "Overtime Rate (per hour)",
+      "description": "Used by 'Sync to HRMS' to create the monthly Overtime Additional Salary. Leave 0 to skip overtime pay for this employee."
+    },
+    {
       "fieldname": "effective_from",
       "fieldtype": "Date",
       "label": "Effective From",
