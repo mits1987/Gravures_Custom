@@ -22,9 +22,6 @@ frappe.listview_settings['Employee Shift'].get_indicator = function(doc) {
     if (doc.locked) {
         return [__('Locked'), 'grey', 'locked'];
     }
-    if (doc.anomaly_reason === 'break_punch') {
-        return [__('Break punch'), 'red', 'anomaly'];
-    }
     if (['missing_checkout', 'previous_month_carryover'].includes(doc.anomaly_reason)) {
         var label = doc.status === 'Missing Check-Out'
             ? __('Missing Check-Out')
@@ -54,8 +51,6 @@ frappe.listview_settings['Employee Shift'].refresh = function(listview) {
             // --- Row background coloring ---
             if (doc.locked) {
                 row.css('background-color', '#d3d3d3');
-            } else if (doc.anomaly_reason === 'break_punch') {
-                row.css('background-color', '#ffe6e6');
             } else if (doc.status === 'Anomaly' || doc.status === 'Missing Check-Out') {
                 row.css('background-color', '#fff4e6');
             } else if (doc.manual_correction) {

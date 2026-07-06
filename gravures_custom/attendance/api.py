@@ -114,6 +114,40 @@ def unlock_period(emp: str = None, year: int = None, month: int = None, reason: 
 
 
 @frappe.whitelist()
+def month_summary(year: int = None, month: int = None) -> dict:
+    """Per-employee monthly summary + totals for the Attendance Dashboard page.
+
+    Reuses the Employee Shift Summary report's Summary view.
+    """
+    frappe.only_for(ALLOWED_ROLES)
+    if not year or not month:
+        frappe.throw(_("Both year and month are required"))
+
+    from gravures_custom.attendance.pairing import format_hhmm
+    from gravures_custom.gravures_custom.report.employee_shift_summary.employee_shift_summary import (
+        execute as run_summary_report,
+    )
+
+    columns, rows = run_summary_report({
+        "year": int(year), "month": int(month), "view": "Summary",
+    })
+
+    total_worked = sum(r["_worked_seconds"] for r in rows)
+    total_ot = sum(r["_overtime_seconds"] for r in rows)
+    return {
+        "period": f"{int(year)}-{int(month):02d}",
+        "rows": rows,
+        "totals": {
+            "employees": len(rows),
+            "present_days": sum(r["present_days"] for r in rows),
+            "total_hours": format_hhmm(total_worked),
+            "overtime": format_hhmm(total_ot),
+            "anomalies": sum(r["anomalies"] for r in rows),
+        },
+    }
+
+
+@frappe.whitelist()
 def sync_month_to_hrms(year: int = None, month: int = None, employee: str = None) -> dict:
     """Create HRMS Attendance records + Overtime Additional Salary for a month.
 

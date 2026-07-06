@@ -1,0 +1,21 @@
+{
+ "content": null,
+ "docstatus": 0,
+ "doctype": "Page",
+ "icon": "calendar",
+ "modified": "2026-07-06 00:00:00.000000",
+ "module": "Gravures Custom",
+ "name": "attendance-dashboard",
+ "owner": "Administrator",
+ "page_name": "attendance-dashboard",
+ "roles": [
+  {"role": "System Manager"},
+  {"role": "HR Manager"},
+  {"role": "HR User"}
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Attendance Dashboard"
+}

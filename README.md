@@ -27,7 +27,7 @@ EasyTime Pro (ZKTeco) ──sync──→ Employee Checkin ──recalc──→
 
 | Doctype | Purpose |
 |---|---|
-| **Employee Shift** | One record per paired IN/OUT. Shows worked hours, overtime, status (Paired / Anomaly / Missing Check-Out / Break punch). |
+| **Employee Shift** | One record per paired IN/OUT. Shows worked hours, overtime, status (Paired / Anomaly / Missing Check-Out / Manual). |
 | **Employee Shift Lock** | Created when a Salary Slip is submitted. Locks all shifts for that employee-month to prevent silent edits after payroll. |
 | **Employee Standard Hours** | Per-employee standard shift hours (9h, 12h, or 30h for monthly) used for overtime calculation, plus the hourly Overtime Rate used for overtime pay. |
 | **Employee Shift Summary** | Script Report — Detail view (one row per shift) or Summary view (per employee: present days, total hours, overtime — same numbers as the old Excel script). Includes the "Sync to HRMS" and "Create Payroll Entry" buttons. |
@@ -40,7 +40,6 @@ Rows are visually coded in the list view:
 |---|---|
 | 🟢 Green | Paired — normal IN/OUT pair, no issues |
 | 🟠 Orange | Anomaly — missing check-out or previous-month carryover (needs review) |
-| 🔴 Light red | Break punch — employee selected "Break Out" instead of "Check Out" |
 | 🔵 Blue | Manual correction applied |
 | ⬜ Grey | Locked — payroll has been processed for this period |
 
@@ -67,10 +66,12 @@ Rows are visually coded in the list view:
 4. Save → shifts auto-rebuild in 2-5 seconds → orange turns green
 
 #### Month-end payroll (the whole flow inside ERPNext)
-1. Open **Employee Shift Summary** report for the month (Summary view) — review present days, total hours, overtime; fix any remaining anomalies first
+1. Open the **Attendance Dashboard** (`/app/attendance-dashboard`) — pick any month/year to see the final summary (per employee: present days, total hours, overtime — same as the old Excel script). Orange rows / the red "Open Anomalies" card show what still needs fixing
 2. Click **Sync to HRMS (Attendance + OT)** — creates submitted `Attendance` records (payment days for payroll) and one `Additional Salary` "Overtime" entry per employee (amount = OT hours × Overtime Rate from Employee Standard Hours). Idempotent: existing records are skipped, safe to re-run
 3. Click **Create Payroll Entry** → standard HRMS flow → **Create Salary Slips**
 4. Submitting each Salary Slip auto-creates an Employee Shift Lock: all that employee-month's shifts get `locked=1` (greyed out), further edits and recalcs are blocked
+
+The same buttons also exist on the Employee Shift Summary report.
 
 #### Correction after payroll (unlock)
 1. Open the Employee Shift Lock record for that employee-month
@@ -89,7 +90,13 @@ What syncs from EasyTime Pro:
 - Biometric ID → Employee.attendance_device_id
 - Face templates (NOT photos — API doesn't provide images)
 
-### Reports
+### Reports & Dashboard
+
+**Attendance Dashboard** (`/app/attendance-dashboard`)
+- Month + Year selectors (view any past month)
+- Cards: Employees, Present Days, Total Hours, Overtime, Open Anomalies (click → filtered shift list)
+- Per-employee summary table with totals row — the old script's summary sheet, live
+- Buttons: **Sync to HRMS (Attendance + OT)** (primary), Create Payroll Entry, Open Shift List, Open Full Report
 
 **Employee Shift Summary** (Reports → Employee Shift Summary)
 - Filters: Year (Int), Month (Select 1-12), Employee (optional Link), View (Detail / Summary)

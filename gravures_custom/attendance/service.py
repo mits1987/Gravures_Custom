@@ -50,16 +50,6 @@ def fetch_checkins_for_period(start: datetime, end: datetime, employee: str = No
         order_by="employee, time",
     )
 
-    # Add helper field for raw type detection (the device_id encodes original punch state).
-    # In real data, 'device_id' looks like "Auto add (ZKTeco-26897)" — original "Break"
-    # punches have it preserved in device_id text per the user's script.
-    for r in records:
-        dev = r.get("device_id") or ""
-        if "BREAK" in dev.upper():
-            r["_raw_log_type"] = "Break In" if r["log_type"] == "IN" else "Break Out"
-        else:
-            r["_raw_log_type"] = ""
-
     grouped = {}
     for r in records:
         grouped.setdefault(r["employee"], []).append(r)
@@ -76,7 +66,6 @@ def _serialize_checkin_for_pairing(checkins):
         out.append({
             "time": ct,
             "log_type": c["log_type"],
-            "log_type_raw": c.get("_raw_log_type", ""),
             "checkin_name": c["name"],
             "employee": c.get("employee"),
             "employee_name": c.get("employee_name"),
@@ -264,8 +253,6 @@ def recalculate_period(year: int, month: int, employee: str = None) -> dict:
 def _map_anomaly_reason(reason: str) -> str:
     """Map internal pairing reason → doctype Anomaly Reason select values."""
     r = reason.lower()
-    if "break" in r:
-        return "break_punch"
     if "carryover" in r:
         return "previous_month_carryover"
     if "unpaired" in r or "missing" in r:

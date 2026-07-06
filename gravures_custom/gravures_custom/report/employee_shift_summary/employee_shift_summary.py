@@ -93,6 +93,10 @@ def _summary(shifts):
             "total_hours": format_hhmm(e["worked"]),
             "overtime": format_hhmm(e["overtime"]),
             "anomalies": e["anomalies"],
+            # raw seconds for consumers that need totals (dashboard);
+            # not in columns, so the report UI ignores them
+            "_worked_seconds": e["worked"],
+            "_overtime_seconds": e["overtime"],
         })
 
     columns = [

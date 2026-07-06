@@ -178,7 +178,7 @@
     {
       "fieldname": "anomaly_reason",
       "fieldtype": "Select",
-      "options": "\nmissing_checkout\nprevious_month_carryover\nbreak_punch\nmanual_correction",
+      "options": "\nmissing_checkout\nprevious_month_carryover\nmanual_correction",
       "read_only": 1,
       "label": "Anomaly Reason",
       "in_list_view": 0,

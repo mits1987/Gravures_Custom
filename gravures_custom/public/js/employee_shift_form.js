@@ -4,7 +4,6 @@
 frappe.ui.form.on('Employee Shift', {
     refresh(frm) {
         const s = frm.doc.status;
-        const r = (frm.doc.anomaly_reason || '').toLowerCase();
         const wrap = frm.fields_dict.status.$wrapper;
 
         const colors = {
@@ -13,8 +12,7 @@ frappe.ui.form.on('Employee Shift', {
             'Anomaly': '#ff4d4d',
             'Manual': '#5b9bd5',
         };
-        const key = (s === 'Anomaly' && r === 'break_punch') ? 'Anomaly' : s;
-        const color = colors[key] || 'inherit';
+        const color = colors[s] || 'inherit';
 
         // Highlight the status pill itself
         wrap.find('.field-area').first().attr('style', `font-weight:bold;color:${color};font-size:1.05em;`);

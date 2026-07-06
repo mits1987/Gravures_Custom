@@ -30,7 +30,6 @@ def pair_checkins(
     sorted_checkins: list of dicts with keys:
         - time: datetime
         - log_type: "IN" or "OUT"
-        - log_type_raw: optional original state ("Check In" / "Check Out" / "Break In" / "Break Out")
         - checkin_name: str
 
     Returns: (paired_shifts, anomalies)
@@ -40,7 +39,7 @@ def pair_checkins(
           shift_date, check_in_name, check_out_name
 
     Each anomaly dict:
-        - time, log_type, log_type_raw, reason, checkin_name
+        - time, log_type, reason, checkin_name
     """
     paired = []
     anomalies = []
@@ -51,7 +50,6 @@ def pair_checkins(
         anomalies.append({
             "time": skipped["time"],
             "log_type": skipped["log_type"],
-            "log_type_raw": skipped.get("log_type_raw"),
             "reason": "previous_month_carryover",
             "checkin_name": skipped.get("checkin_name"),
         })
@@ -63,29 +61,6 @@ def pair_checkins(
     while i < len(sorted_checkins) - 1:
         cur = sorted_checkins[i]
         nxt = sorted_checkins[i + 1]
-
-        # break entries flag as anomaly (do not pair)
-        if cur.get("log_type_raw") and "break" in cur["log_type_raw"].lower():
-            anomalies.append({
-                "time": cur["time"],
-                "log_type": cur["log_type"],
-                "log_type_raw": cur["log_type_raw"],
-                "reason": "break_punch_orig",
-                "checkin_name": cur.get("checkin_name"),
-            })
-            i += 1
-            continue
-
-        if nxt.get("log_type_raw") and "break" in nxt["log_type_raw"].lower():
-            anomalies.append({
-                "time": nxt["time"],
-                "log_type": nxt["log_type"],
-                "log_type_raw": nxt["log_type_raw"],
-                "reason": "break_punch_next",
-                "checkin_name": nxt.get("checkin_name"),
-            })
-            i += 1
-            continue
 
         if cur["log_type"] == "IN" and nxt["log_type"] == "OUT":
             check_in = cur["time"]
@@ -109,7 +84,6 @@ def pair_checkins(
             anomalies.append({
                 "time": cur["time"],
                 "log_type": cur["log_type"],
-                "log_type_raw": cur.get("log_type_raw"),
                 "reason": f"unpaired_current_{cur['log_type']}",
                 "checkin_name": cur.get("checkin_name"),
             })
@@ -121,7 +95,6 @@ def pair_checkins(
         anomalies.append({
             "time": last["time"],
             "log_type": last["log_type"],
-            "log_type_raw": last.get("log_type_raw"),
             "reason": f"unpaired_final_{last['log_type'].lower()}",
             "checkin_name": last.get("checkin_name"),
         })
