@@ -39,7 +39,7 @@ def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, letterhe
 
     try:
         # 5. Run Chrome
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
         
         # 6. Read the generated PDF
         with open(pdf_path, 'rb') as f:

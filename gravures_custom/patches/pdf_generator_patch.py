@@ -36,7 +36,7 @@ def chrome_get_pdf(html, options=None, output=None):
     ]
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
         with open(pdf_path, 'rb') as f:
             pdf = f.read()
     except Exception as e:
