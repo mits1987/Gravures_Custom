@@ -135,22 +135,21 @@ def _send_document_via_whatsapp(doc_b64, filename, caption, chat_id_override=Non
     If chat_id_override is provided, send to that chat instead of the
     default from OpenWA Settings.
     """
-    enabled = frappe.db.get_single_value("OpenWA Settings", "enabled")
-    if not enabled:
+    settings = frappe.get_cached_doc("OpenWA Settings")
+    if not settings.enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    base_url = frappe.db.get_single_value("OpenWA Settings", "base_url")
+    base_url = (settings.base_url or "").rstrip("/")
     if not base_url:
         frappe.throw("OpenWA Base URL not set.")
-    chat_id = chat_id_override or frappe.db.get_single_value("OpenWA Settings", "chat_id")
+    chat_id = chat_id_override or settings.chat_id
     if not chat_id:
         frappe.throw("No Chat ID in OpenWA Settings.")
-    api_key = frappe.db.get_single_value("OpenWA Settings", "api_key") or ""
+    api_key = settings.get_password("api_key") or ""
     if not api_key:
         frappe.throw("No API Key in OpenWA Settings.")
-    session_id = frappe.db.get_single_value("OpenWA Settings", "session_id") or "default"
+    session_id = settings.session_id or "default"
 
-    url = "{0}/api/sessions/{1}/messages/send-document".format(
-        base_url.rstrip("/"), session_id)
+    url = "{0}/api/sessions/{1}/messages/send-document".format(base_url, session_id)
     payload = {"chatId": chat_id, "base64": doc_b64, "mimetype": "application/pdf",
                "filename": filename, "caption": caption}
 
@@ -217,14 +216,14 @@ def get_whatsapp_chats():
     if cached:
         return cached
 
-    enabled = frappe.db.get_single_value("OpenWA Settings", "enabled")
-    if not enabled:
+    settings = frappe.get_cached_doc("OpenWA Settings")
+    if not settings.enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    base_url = frappe.db.get_single_value("OpenWA Settings", "base_url")
+    base_url = (settings.base_url or "").rstrip("/")
     if not base_url:
         frappe.throw("OpenWA Base URL not set.")
-    api_key = frappe.db.get_single_value("OpenWA Settings", "api_key") or ""
-    session_id = frappe.db.get_single_value("OpenWA Settings", "session_id") or "default"
+    api_key = settings.get_password("api_key") or ""
+    session_id = settings.session_id or "default"
 
     headers = {"X-API-Key": api_key}
     result = {"chats": [], "groups": []}
@@ -310,29 +309,28 @@ def _screenshot_html(html_content, width=1000):
 
 def _send_image_via_whatsapp(image_b64, filename, caption):
     """Send a base64 image to the configured WhatsApp chat."""
-    enabled = frappe.db.get_single_value("OpenWA Settings", "enabled")
-    if not enabled:
+    settings = frappe.get_cached_doc("OpenWA Settings")
+    if not settings.enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    base_url = frappe.db.get_single_value("OpenWA Settings", "base_url")
+    base_url = (settings.base_url or "").rstrip("/")
     if not base_url:
         frappe.throw("OpenWA Base URL not set.")
-    chat_id = frappe.db.get_single_value("OpenWA Settings", "chat_id")
+    chat_id = settings.chat_id
     if not chat_id:
         frappe.throw("No Chat ID in OpenWA Settings.")
-    api_key = frappe.db.get_single_value("OpenWA Settings", "api_key") or ""
+    api_key = settings.get_password("api_key") or ""
     if not api_key:
         frappe.throw("No API Key in OpenWA Settings.")
-    session_id = frappe.db.get_single_value("OpenWA Settings", "session_id") or "default"
+    session_id = settings.session_id or "default"
 
-    url = "{0}/api/sessions/{1}/messages/send-document".format(
-        base_url.rstrip("/"), session_id)
+    url = "{0}/api/sessions/{1}/messages/send-document".format(base_url, session_id)
     payload = {"chatId": chat_id, "base64": image_b64, "mimetype": "image/png",
                "filename": filename, "caption": caption}
 
     try:
         r = requests.post(url, json=payload, headers={"X-API-Key": api_key}, timeout=30)
     except requests.exceptions.ConnectionError:
-        frappe.throw("Cannot connect to OpenWA at {0}. Is it running?".format(settings.base_url))
+        frappe.throw("Cannot connect to OpenWA at {0}. Is it running?".format(base_url))
     except requests.exceptions.Timeout:
         frappe.throw("OpenWA timed out after 30 seconds.")
     except Exception:
