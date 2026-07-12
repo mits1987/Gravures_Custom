@@ -8,6 +8,25 @@ from urllib.parse import urljoin
 import requests
 
 
+# ---------------------------------------------------------------------------
+# Circuit breaker — shared with kreativ_attendance.openwa_health
+# ---------------------------------------------------------------------------
+
+def _check_whatsapp_circuit_breaker():
+    """Check if OpenWA circuit breaker is tripped.
+
+    Mirrors the breaker in kreativ_attendance which sets openwa_failure_streak
+    in cache. If >= 3 consecutive failures, reject the request with a friendly
+    message instead of hitting the (presumed-down) gateway.
+    """
+    streak = int(frappe.cache().get_value("openwa_failure_streak") or 0)
+    if streak >= 3:
+        frappe.throw(
+            "WhatsApp service is temporarily unavailable (circuit breaker open). "
+            "Please try again later. If the issue persists, check OpenWA health."
+        )
+
+
 @frappe.whitelist()
 def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, letterhead=None, settings=None, _lang=None):
     html = frappe.get_print(
@@ -135,6 +154,7 @@ def _send_document_via_whatsapp(doc_b64, filename, caption, chat_id_override=Non
     If chat_id_override is provided, send to that chat instead of the
     default from OpenWA Settings.
     """
+    _check_whatsapp_circuit_breaker()
     settings = frappe.get_cached_doc("OpenWA Settings")
     if not settings.enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
@@ -309,6 +329,7 @@ def _screenshot_html(html_content, width=1000):
 
 def _send_image_via_whatsapp(image_b64, filename, caption):
     """Send a base64 image to the configured WhatsApp chat."""
+    _check_whatsapp_circuit_breaker()
     settings = frappe.get_cached_doc("OpenWA Settings")
     if not settings.enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
@@ -351,6 +372,15 @@ def _send_image_via_whatsapp(image_b64, filename, caption):
         frappe.log_error(title="WhatsApp send failed: {0}".format(r.status_code),
                          message="URL: {0}\nResponse: {1}".format(url, error_msg))
         frappe.throw("WhatsApp failed (HTTP {0}): {1}".format(r.status_code, error_msg))
+
+
+def _dispatch_screenshot(html, filename, caption, width=1000):
+    """Render HTML to PNG and send via WhatsApp. Shared by all dispatch endpoints."""
+    png = _screenshot_html(html, width=width)
+    b64 = base64.b64encode(png).decode("utf-8")
+    if len(b64) < 1024:
+        frappe.throw("Generated screenshot is empty.")
+    return _send_image_via_whatsapp(b64, filename, caption)
 
 
 def _format_date_range(from_date, to_date):
@@ -486,11 +516,7 @@ def send_dispatch_whatsapp(from_date=None, to_date=None):
         _build_table(cols, main_rows, shift_total=True) if main_rows else '<p style="text-align:center;color:#999;">No data</p>',
         _build_table(cols, excluded_rows, shift_total=True) if excluded_rows else '<p style="text-align:center;color:#999;">No data</p>')
 
-    png = _screenshot_html(html)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "Dispatch_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "Dispatch_{0}.png".format(from_date), caption)
 
 
 def _build_table(cols, rows, shift_total=False):
@@ -629,11 +655,7 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
 {1}
 </body></html>""".format(date_label, tables_html) if machine_names else """<!DOCTYPE html><html><body><p>No data</p></body></html>"""
 
-    png = _screenshot_html(html, width=2400)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "Engraving_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "Engraving_{0}.png".format(from_date), caption, width=2400)
 
 
 @frappe.whitelist()
@@ -686,11 +708,7 @@ table{{border-collapse:collapse;width:auto;}}
 </table>
 </body></html>""".format(_format_date_range(from_date, to_date), th_style, rows_html)
 
-    png = _screenshot_html(html, width=600)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "EngravingMonthly_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "EngravingMonthly_{0}.png".format(from_date), caption, width=600)
 
 
 @frappe.whitelist()
@@ -768,11 +786,7 @@ def send_proofing_whatsapp(from_date=None, to_date=None):
 </table>
 </body></html>""".format(date_label, ths, rows_html)
 
-    png = _screenshot_html(html)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "Proofing_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "Proofing_{0}.png".format(from_date), caption)
 
 
 @frappe.whitelist()
@@ -837,11 +851,7 @@ def send_dispatch_customer_whatsapp(from_date=None, to_date=None):
 </table>
 </body></html>""".format(date_label, ths, rows_html)
 
-    png = _screenshot_html(html)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "CustomerDispatch_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "CustomerDispatch_{0}.png".format(from_date), caption)
 
 
 @frappe.whitelist()
@@ -893,11 +903,7 @@ def send_dispatch_monthly_whatsapp(from_date=None, to_date=None):
         _build_table(cols, main_rows, shift_total=False) if main_rows else '<p style="text-align:center;color:#999;">No data</p>',
         _build_table(cols, excluded_rows, shift_total=False) if excluded_rows else '<p style="text-align:center;color:#999;">No data</p>')
 
-    png = _screenshot_html(html)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "MonthlyDispatch_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "MonthlyDispatch_{0}.png".format(from_date), caption)
 
 
 @frappe.whitelist()
@@ -951,11 +957,7 @@ def send_dispatch_yearly_whatsapp(from_date=None, to_date=None):
         _build_table(cols, main_rows, shift_total=False) if main_rows else '<p style="text-align:center;color:#999;">No data</p>',
         _build_table(cols, excluded_rows, shift_total=False) if excluded_rows else '<p style="text-align:center;color:#999;">No data</p>')
 
-    png = _screenshot_html(html)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "DispatchYearly_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "DispatchYearly_{0}.png".format(from_date), caption)
 
 
 @frappe.whitelist()
@@ -1022,11 +1024,7 @@ def send_job_status_whatsapp(from_date=None, to_date=None):
 </table>
 </body></html>""".format(date_label, summary_style, total_count, total_tmm, th_style, rows_html)
 
-    png = _screenshot_html(html)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "JobStatus_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(html, "JobStatus_{0}.png".format(from_date), caption)
 
 
 @frappe.whitelist()
@@ -1240,8 +1238,4 @@ def send_monthly_report_whatsapp(month=None):
 <div style="margin-bottom:15px;"><h5 style="text-align:center;">DISPATCH</h5>{2}</div>
 </body></html>""".format(proofing_html, engraving_html, dispatch_html, title_text)
 
-    png = _screenshot_html(html)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, "Monthly_{0}.png".format(month), caption)
+    return _dispatch_screenshot(html, "Monthly_{0}.png".format(month), caption)
