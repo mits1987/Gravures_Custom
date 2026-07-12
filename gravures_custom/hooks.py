@@ -63,7 +63,7 @@ fixtures = [
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_js = "/assets/gravures_custom/js/print_whatsapp_pf.js"
+app_include_js = "/assets/gravures_custom/js/print_whatsapp_v3.js"
 
 # Login page environment marker: injects a "TESTING" banner on non-prod sites.
 # Detection runs in gravures_custom.login_marker.update_website_context which
