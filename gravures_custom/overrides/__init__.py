@@ -129,15 +129,19 @@ def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, lette
             os.unlink(pdf_path)
 
 
-def _send_document_via_whatsapp(doc_b64, filename, caption):
-    """Send a base64 PDF/document to the configured WhatsApp chat."""
+def _send_document_via_whatsapp(doc_b64, filename, caption, chat_id_override=None):
+    """Send a base64 PDF/document to the configured WhatsApp chat.
+
+    If chat_id_override is provided, send to that chat instead of the
+    default from OpenWA Settings.
+    """
     enabled = frappe.db.get_single_value("OpenWA Settings", "enabled")
     if not enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
     base_url = frappe.db.get_single_value("OpenWA Settings", "base_url")
     if not base_url:
         frappe.throw("OpenWA Base URL not set.")
-    chat_id = frappe.db.get_single_value("OpenWA Settings", "chat_id")
+    chat_id = chat_id_override or frappe.db.get_single_value("OpenWA Settings", "chat_id")
     if not chat_id:
         frappe.throw("No Chat ID in OpenWA Settings.")
     api_key = frappe.db.get_single_value("OpenWA Settings", "api_key") or ""
@@ -177,9 +181,12 @@ def _send_document_via_whatsapp(doc_b64, filename, caption):
 
 
 @frappe.whitelist()
-def send_print_pdf_whatsapp(doctype, name, print_format=None):
+def send_print_pdf_whatsapp(doctype, name, print_format=None, chat_id=None):
     """Generate PDF for the given document and send it to WhatsApp.
-    Called from the Print Preview page WhatsApp button."""
+    Called from the Print Preview page WhatsApp button.
+
+    If chat_id is provided, send to that specific WhatsApp chat
+    instead of the default from OpenWA Settings."""
     if not doctype or not name:
         frappe.throw("doctype and name are required")
     pdf_bytes = _generate_pdf_bytes(doctype, name, print_format=print_format)
@@ -189,7 +196,79 @@ def send_print_pdf_whatsapp(doctype, name, print_format=None):
     filename = "{0}_{1}.pdf".format(doctype.replace(" ", "_"), name)
     doc_title = "{0} {1}".format(doctype, name)
     caption = doc_title
-    return _send_document_via_whatsapp(b64, filename, caption)
+    return _send_document_via_whatsapp(b64, filename, caption, chat_id_override=chat_id)
+
+
+@frappe.whitelist()
+def get_whatsapp_chats():
+    """Fetch recent chats and groups from OpenWA for the contact picker.
+
+    Returns a cached list (5-minute TTL) of chats and groups so the
+    frontend can display a searchable picker modal.
+
+    Response shape:
+    {
+        "chats": [ {"id": "...", "name": "...", "isGroup": bool, "lastMessage": "...", "timestamp": int}, ... ],
+        "groups": [ {"id": "...", "name": "..."}, ... ]
+    }
+    """
+    cache_key = "openwa_chats_list"
+    cached = frappe.cache().get_value(cache_key)
+    if cached:
+        return cached
+
+    enabled = frappe.db.get_single_value("OpenWA Settings", "enabled")
+    if not enabled:
+        frappe.throw("WhatsApp is disabled in OpenWA Settings.")
+    base_url = frappe.db.get_single_value("OpenWA Settings", "base_url")
+    if not base_url:
+        frappe.throw("OpenWA Base URL not set.")
+    api_key = frappe.db.get_single_value("OpenWA Settings", "api_key") or ""
+    session_id = frappe.db.get_single_value("OpenWA Settings", "session_id") or "default"
+
+    headers = {"X-API-Key": api_key}
+    result = {"chats": [], "groups": []}
+
+    # Fetch recent chats (most recent first)
+    try:
+        r = requests.get(
+            "{0}/api/sessions/{1}/chats?limit=100".format(base_url.rstrip("/"), session_id),
+            headers=headers, timeout=15,
+        )
+        if r.ok:
+            chats = r.json() if isinstance(r.json(), list) else []
+            result["chats"] = [
+                {
+                    "id": c.get("id", ""),
+                    "name": c.get("name") or c.get("formattedName") or c.get("id", ""),
+                    "isGroup": c.get("isGroup", False),
+                    "lastMessage": (c.get("lastMessage") or "")[:80],
+                    "timestamp": c.get("timestamp", 0),
+                }
+                for c in chats
+                if not c.get("isGroup")  # separate DMs from groups
+            ]
+    except Exception:
+        frappe.log_error(title="OpenWA chats fetch failed", message=frappe.get_traceback())
+
+    # Fetch groups
+    try:
+        r = requests.get(
+            "{0}/api/sessions/{1}/groups?limit=100".format(base_url.rstrip("/"), session_id),
+            headers=headers, timeout=15,
+        )
+        if r.ok:
+            groups = r.json() if isinstance(r.json(), list) else []
+            result["groups"] = [
+                {"id": g.get("id", ""), "name": g.get("name") or g.get("id", "")}
+                for g in groups
+            ]
+    except Exception:
+        frappe.log_error(title="OpenWA groups fetch failed", message=frappe.get_traceback())
+
+    # Cache for 5 minutes
+    frappe.cache().set_value(cache_key, result, expires_in_sec=300)
+    return result
 
 
 def _screenshot_html(html_content, width=1000):
