@@ -19,7 +19,8 @@ def _check_whatsapp_circuit_breaker():
     in cache. If >= 3 consecutive failures, reject the request with a friendly
     message instead of hitting the (presumed-down) gateway.
     """
-    streak = int(frappe.cache().get_value("openwa_failure_streak") or 0)
+    site = frappe.local.site or "default"
+    streak = int(frappe.cache().get_value(f"openwa:streak:{site}") or 0)
     if streak >= 3:
         frappe.throw(
             "WhatsApp service is temporarily unavailable (circuit breaker open). "
@@ -1239,3 +1240,269 @@ def send_monthly_report_whatsapp(month=None):
 </body></html>""".format(proofing_html, engraving_html, dispatch_html, title_text)
 
     return _dispatch_screenshot(html, "Monthly_{0}.png".format(month), caption)
+
+
+# ---------------------------------------------------------------------------
+# OpenWA Settings Whitelisted Methods (for Gravures Custom - kreativ216)
+# ---------------------------------------------------------------------------
+
+def _get_openwa_settings(require_chat=False, require_enabled=False):
+    """Get OpenWA Settings single doc, throws if not configured.
+
+    Set require_chat=True for send operations that need a recipient chat_id.
+    Set require_enabled=True for send operations that require the feature enabled.
+    """
+    settings = frappe.get_single("OpenWA Settings")
+    if require_enabled and not settings.enabled:
+        frappe.throw("WhatsApp is disabled in OpenWA Settings.")
+    if not settings.base_url:
+        frappe.throw("OpenWA Base URL is not set. Configure it in OpenWA Settings.")
+    api_key = settings.get_password("api_key", raise_exception=False)
+    if not api_key:
+        frappe.throw("OpenWA API Key is not set. Configure it in OpenWA Settings.")
+    if require_chat and not settings.chat_id:
+        frappe.throw("No Recipient Chat ID set in OpenWA Settings.")
+    return settings
+
+
+def _openwa_headers(api_key):
+    return {"X-API-Key": api_key}
+
+
+@frappe.whitelist()
+def get_openwa_session_status():
+    """Fetch current session status from OpenWA gateway."""
+    frappe.only_for(("System Manager", "HR Manager"))
+    settings = _get_openwa_settings()
+    base_url = settings.base_url.rstrip("/")
+    api_key = settings.get_password("api_key", raise_exception=False)
+    session_id = settings.session_id or "default"
+
+    try:
+        r = requests.get(f"{base_url}/api/sessions/{session_id}",
+                         headers=_openwa_headers(api_key), timeout=10)
+        if r.status_code == 404:
+            return {"status": "not_found", "message": "Session not found on OpenWA"}
+        if r.status_code != 200:
+            return {"status": "error", "message": f"Session API returned {r.status_code}: {r.text[:200]}"}
+        data = r.json()
+        return {
+            "status": data.get("status", "unknown"),
+            "phone": data.get("phone"),
+            "pushname": data.get("pushName") or data.get("pushname"),
+            "lastActive": data.get("lastActive"),
+            "session_id": data.get("id"),
+            "session_name": data.get("name"),
+        }
+    except Exception as e:
+        frappe.log_error(f"OpenWA session status error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist()
+def get_openwa_session_qr():
+    """Get QR code image for the session (base64 data URL)."""
+    frappe.only_for(("System Manager", "HR Manager"))
+    settings = _get_openwa_settings()
+    base_url = settings.base_url.rstrip("/")
+    api_key = settings.get_password("api_key", raise_exception=False)
+    session_id = settings.session_id or "default"
+
+    try:
+        r = requests.get(f"{base_url}/api/sessions/{session_id}/qr",
+                         headers=_openwa_headers(api_key), timeout=10)
+        if r.status_code == 404:
+            return {"status": "error", "message": "Session not found on OpenWA"}
+        if r.status_code != 200:
+            return {"status": "error", "message": f"QR API returned {r.status_code}: {r.text[:200]}"}
+
+        data = r.json()
+        qr_code = data.get("qrCode", "")
+        return {
+            "status": "ok",
+            "qr": qr_code,
+            "session_status": data.get("status", "qr_ready"),
+        }
+    except Exception as e:
+        frappe.log_error(f"OpenWA QR error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist()
+def start_openwa_session():
+    """Start/Restart the WhatsApp session."""
+    frappe.only_for(("System Manager", "HR Manager"))
+    settings = _get_openwa_settings()
+    base_url = settings.base_url.rstrip("/")
+    api_key = settings.get_password("api_key", raise_exception=False)
+    session_id = settings.session_id or "default"
+
+    try:
+        r = requests.post(f"{base_url}/api/sessions/{session_id}/start",
+                          headers=_openwa_headers(api_key), timeout=15)
+        if r.status_code in (200, 201):
+            data = r.json()
+            return {"status": "ok", "message": f"Session start requested. New status: {data.get('status', 'unknown')}"}
+        return {"status": "error", "message": f"Start returned {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        frappe.log_error(f"OpenWA start session error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist()
+def stop_openwa_session():
+    """Stop the WhatsApp session."""
+    frappe.only_for(("System Manager", "HR Manager"))
+    settings = _get_openwa_settings()
+    base_url = settings.base_url.rstrip("/")
+    api_key = settings.get_password("api_key", raise_exception=False)
+    session_id = settings.session_id or "default"
+
+    try:
+        r = requests.post(f"{base_url}/api/sessions/{session_id}/stop",
+                          headers=_openwa_headers(api_key), timeout=10)
+        if r.status_code in (200, 204):
+            return {"status": "ok", "message": "Session stopped successfully"}
+        return {"status": "error", "message": f"Stop returned {r.status_code}: {r.text[:200]}"}
+    except Exception as e:
+        frappe.log_error(f"OpenWA stop session error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist()
+def create_new_openwa_session():
+    """Create a brand new WhatsApp session on OpenWA and update settings."""
+    frappe.only_for(("System Manager", "HR Manager"))
+    settings = _get_openwa_settings()
+    base_url = settings.base_url.rstrip("/")
+    api_key = settings.get_password("api_key", raise_exception=False)
+
+    site_name = frappe.local.site or "default"
+    try:
+        # 1. Create session
+        r = requests.post(f"{base_url}/api/sessions",
+                          headers={"Content-Type": "application/json", **_openwa_headers(api_key)},
+                          json={"name": site_name}, timeout=15)
+        if r.status_code != 201:
+            return {"status": "error", "message": f"Create session returned {r.status_code}: {r.text[:300]}"}
+
+        new_session = r.json()
+        new_session_id = new_session.get("id")
+        if not new_session_id:
+            return {"status": "error", "message": "No session ID returned from OpenWA"}
+
+        # 2. Update Frappe settings
+        settings.db_set("session_id", new_session_id, commit=True)
+
+        # 3. Start it to get QR
+        requests.post(f"{base_url}/api/sessions/{new_session_id}/start",
+                      headers=_openwa_headers(api_key), timeout=10)
+
+        return {
+            "status": "ok",
+            "message": f"New session created: {new_session.get('name', '')} (id: {new_session_id}). Updated settings. Scan QR to link WhatsApp.",
+            "new_session_id": new_session_id,
+        }
+    except Exception as e:
+        frappe.log_error(f"OpenWA create session error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist()
+def send_test_whatsapp():
+    """Send a test message via OpenWA to verify connectivity."""
+    frappe.only_for(("System Manager", "HR Manager"))
+    settings = _get_openwa_settings(require_chat=True)
+    api_key = settings.get_password("api_key", raise_exception=False)
+    session_id = settings.session_id or "default"
+    base_url = settings.base_url.rstrip("/")
+    target_chat = settings.chat_id
+
+    if not target_chat:
+        frappe.throw("No Recipient Chat ID set in OpenWA Settings")
+
+    test_message = "✅ WhatsApp notification is working!\n\nSite: {site}\nSession: {session}\n\nIf you see this, everything is configured correctly.".format(
+        site=frappe.local.site or "unknown", session=session_id)
+
+    try:
+        payload = {
+            "chatId": target_chat,
+            "contentType": "string",
+            "content": test_message
+        }
+        r = requests.post(f"{base_url}/api/sessions/{session_id}/send-message",
+                          headers={"Content-Type": "application/json", "X-API-Key": api_key},
+                          json=payload, timeout=30)
+        if r.status_code in (200, 201):
+            return {"status": "success", "message": f"Test message sent to {target_chat}"}
+        return {"status": "error", "message": f"Send failed: {r.status_code} {r.text[:200]}"}
+    except Exception as e:
+        frappe.log_error(f"OpenWA send test error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist()
+def send_whatsapp_via_openwa(message=None, chat_id=None, file_data=None, file_type=None, filename=None):
+    """Generic WhatsApp send via OpenWA (text, image, or document)."""
+    frappe.only_for(("System Manager", "HR Manager"))
+    settings = _get_openwa_settings()
+    
+    api_key = settings.get_password("api_key", raise_exception=False)
+    session_id = settings.session_id or "default"
+    base_url = settings.base_url.rstrip("/")
+    target_chat = chat_id or settings.chat_id
+    
+    if not target_chat:
+        frappe.throw("No Chat ID specified and no default in settings")
+
+    headers = _openwa_headers(api_key)
+    
+    try:
+        if file_data and file_type:
+            # Send image/document
+            if file_type in ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]:
+                # Send as image
+                import base64
+                b64_data = base64.b64encode(file_data).decode("utf-8") if isinstance(file_data, bytes) else file_data
+                payload = {
+                    "chatId": target_chat,
+                    "contentType": "image",
+                    "media": b64_data,
+                    "caption": message or ""
+                }
+            else:
+                # Send as document
+                import base64
+                b64_data = base64.b64encode(file_data).decode("utf-8") if isinstance(file_data, bytes) else file_data
+                payload = {
+                    "chatId": target_chat,
+                    "contentType": "document",
+                    "media": b64_data,
+                    "filename": filename or "document.pdf",
+                    "caption": message or ""
+                }
+            
+            r = requests.post(f"{base_url}/api/sessions/{session_id}/send-media",
+                             headers={**headers, "Content-Type": "application/json"},
+                             json=payload, timeout=30)
+            
+            if r.status_code in (200, 201):
+                return {"status": "success", "message": f"File sent to {target_chat}"}
+            return {"status": "error", "message": f"Send failed: {r.status_code} {r.text[:200]}"}
+        else:
+            # Send text message
+            payload = {
+                "chatId": target_chat,
+                "contentType": "string",
+                "content": message
+            }
+            r = requests.post(f"{base_url}/api/sessions/{session_id}/send-message",
+                             headers={**headers, "Content-Type": "application/json"},
+                             json=payload, timeout=30)
+            if r.status_code in (200, 201):
+                return {"status": "success", "message": f"Message sent to {target_chat}"}
+            return {"status": "error", "message": f"Send failed: {r.status_code} {r.text[:200]}"}
+            
+    except Exception as e:
+        frappe.log_error(f"OpenWA send error: {e}")
+        return {"status": "error", "message": str(e)}

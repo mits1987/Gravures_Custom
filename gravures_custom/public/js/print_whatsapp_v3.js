@@ -1,5 +1,5 @@
 // Adds a "Send to WhatsApp" button to the Print Preview toolbar.
-// When clicked, opens a contact picker modal to select recipient,
+// Opens a clean contact picker modal to select recipient,
 // then generates and sends the PDF via WhatsApp.
 
 (function () {
@@ -11,14 +11,23 @@
        Contact Picker Modal
     ----------------------------------------------------------- */
     function showContactPicker(doctype, name, print_format, _lang) {
-        const d = new frappe.ui.Dialog({
+        var d = new frappe.ui.Dialog({
             title: "Send PDF to WhatsApp",
             size: "large",
             fields: [
                 {
+                    fieldname: "manual_send_html",
+                    fieldtype: "HTML",
+                    options: getManualSendHtml(),
+                },
+                {
+                    fieldtype: "Section Break",
+                },
+                {
                     fieldname: "search_input",
                     fieldtype: "Data",
-                    label: "Search contacts or groups",
+                    label: "",
+                    placeholder: "Search contacts or groups...",
                     onchange: function () {
                         filterPickerList(d);
                     },
@@ -34,11 +43,95 @@
             },
         });
         d.show();
-        d.$wrapper.find(".modal-dialog").css("max-width", "600px");
+
+        // Style
+        d.$wrapper.find(".modal-dialog").css({
+            "max-width": "480px"
+        });
+        d.$wrapper.find(".modal-content").css({
+            "border-radius": "12px",
+            border: "none",
+            "box-shadow": "0 8px 32px rgba(0,0,0,0.15)"
+        });
+        d.$wrapper.find(".modal-header").css({
+            "border-bottom": "1px solid #f0f0f0",
+            padding: "16px 20px"
+        });
+        d.$wrapper.find(".modal-header .modal-title").css({
+            "font-size": "15px",
+            "font-weight": "600"
+        });
+        d.$wrapper.find(".modal-body").css({
+            padding: "16px 20px"
+        });
+        d.$wrapper.find(".modal-footer").css({
+            "border-top": "1px solid #f0f0f0",
+            padding: "12px 20px"
+        });
+
+        // Style search field
+        setTimeout(function () {
+            var $searchInput = d.$wrapper.find('[data-fieldname="search_input"] input');
+            $searchInput.css({
+                "border-radius": "8px",
+                padding: "10px 14px",
+                "font-size": "13px",
+                background: "#f5f6f8",
+                border: "1px solid #e5e7eb",
+                width: "100%",
+                outline: "none",
+                "box-sizing": "border-box"
+            });
+            $searchInput.on("focus", function () {
+                $(this).css({ background: "#fff", "border-color": "#25D366" });
+            });
+            $searchInput.on("blur", function () {
+                $(this).css({ background: "#f5f6f8", "border-color": "#e5e7eb" });
+            });
+        }, 50);
+
+        // Wire up the manual send
+        setTimeout(function () {
+            var $row = d.$wrapper.find('[data-fieldname="manual_send_html"]');
+            var $input = $row.find(".wa-manual-input");
+            var $btn = $row.find(".wa-manual-btn");
+
+            function doSend() {
+                var num = $input.val() || "";
+                var clean = num.replace(/[^0-9]/g, "");
+                if (!clean || clean.length < 10) {
+                    frappe.msgprint("Enter a valid phone with country code (e.g. 919106526195)");
+                    $input.focus();
+                    return;
+                }
+                var chatId = clean + "@c.us";
+                d.hide();
+                sendWithSelectedChat(doctype, name, print_format, _lang, chatId, clean);
+            }
+
+            $btn.on("click", doSend);
+            $input.on("keydown", function (e) {
+                if (e.which === 13) { doSend(); }
+            });
+            $input.on("focus", function () {
+                $(this).css({
+                    "border-color": "#25D366",
+                    "box-shadow": "0 0 0 3px rgba(37,211,102,0.1)"
+                });
+            });
+            $input.on("blur", function () {
+                $(this).css({
+                    "border-color": "#d0d5dd",
+                    "box-shadow": "none"
+                });
+            });
+            // Focus input
+            setTimeout(function () { $input.focus(); }, 200);
+        }, 50);
 
         // Show loading state
         d.fields_dict.picker_html.$wrapper.html(
-            '<div style="text-align:center;padding:30px;color:#888;">Loading chats...</div>'
+            '<div style="text-align:center;padding:30px;color:#999;font-size:13px;">Loading chats...</div>'
         );
 
         // Fetch chats from backend
@@ -62,23 +155,44 @@
         });
     }
 
-    function renderPickerList(d, query, doctype, name, print_format, _lang) {
-        const data = d._picker_data || { chats: [], groups: [] };
-        const q = (query || "").toLowerCase();
-        let html = "";
+    function getManualSendHtml() {
+        return (
+            '<div style="margin: 0 0 4px 0;">' +
+                '<label style="display:block;font-size:12px;color:#555;font-weight:500;margin-bottom:6px;">Phone Number</label>' +
+                '<div style="display:flex;gap:8px;align-items:stretch;flex-wrap:nowrap;">' +
+                    '<input type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="e.g. 919106526195" class="wa-manual-input" style="' +
+                        'flex:1;min-width:0;padding:10px 14px;font-size:14px;border:1px solid #d0d5dd;' +
+                        'border-radius:8px;outline:none;transition:all 0.2s;background:#fff;color:#1a1a1a;' +
+                        'font-family:inherit;-webkit-appearance:none;"' +
+                        ' autocomplete="tel" />' +
+                    '<button class="wa-manual-btn" style="' +
+                        'padding:10px 20px;background:#25D366;color:white;border:none;border-radius:8px;' +
+                        'font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s;' +
+                        'white-space:nowrap;flex-shrink:0;line-height:1;-webkit-appearance:none;"' +
+                        '>Send</button>' +
+                '</div>' +
+                '<p style="margin:4px 0 0;font-size:11px;color:#999;">Include country code, no + or spaces</p>' +
+            '</div>'
+        );
+    }
 
-        // Filter chats
-        const chats = (data.chats || []).filter(function (c) {
+    /* -----------------------------------------------------------
+       Contact list rendering
+    ----------------------------------------------------------- */
+    function renderPickerList(d, query, doctype, name, print_format, _lang) {
+        var data = d._picker_data || { chats: [], groups: [] };
+        var q = (query || "").toLowerCase();
+        var html = "";
+
+        // Filter
+        var chats = (data.chats || []).filter(function (c) {
             if (!q) return true;
             return (
                 (c.name || "").toLowerCase().indexOf(q) >= 0 ||
-                (c.id || "").indexOf(q) >= 0 ||
-                (c.lastMessage || "").toLowerCase().indexOf(q) >= 0
+                (c.id || "").indexOf(q) >= 0
             );
         });
-
-        // Filter groups
-        const groups = (data.groups || []).filter(function (g) {
+        var groups = (data.groups || []).filter(function (g) {
             if (!q) return true;
             return (
                 (g.name || "").toLowerCase().indexOf(q) >= 0 ||
@@ -87,103 +201,83 @@
         });
 
         if (chats.length === 0 && groups.length === 0) {
-            html = '<div style="text-align:center;padding:30px;color:#888;">No results found.</div>';
+            html = '<div style="max-height:340px;overflow-y:auto;"><div style="text-align:center;padding:40px 20px;color:#999;font-size:13px;">No contacts found.</div></div>';
         } else {
-            // Recent Chats section
+            html = '<div style="max-height:340px;overflow-y:auto;">';
+
             if (chats.length > 0) {
-                html += '<div style="font-weight:600;padding:6px 12px;color:#555;font-size:12px;text-transform:uppercase;">Recent Chats</div>';
+                html += '<div style="padding:8px 0 2px;color:#999;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Chats</div>';
                 chats.forEach(function (c) {
-                    const initials = getInitials(c.name);
-                    const time = c.timestamp ? formatTimestamp(c.timestamp) : "";
-                    const msgPreview = c.lastMessage
-                        ? '<div style="font-size:11px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:350px;">' + frappe.utils.escape_html(c.lastMessage) + "</div>"
-                        : "";
+                    var initials = getInitials(c.name);
                     html +=
                         '<div class="wa-picker-item" data-chat-id="' +
                         frappe.utils.escape_html(c.id) +
-                        '" style="display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;transition:background 0.15s;">' +
-                        '<div style="width:36px;height:36px;border-radius:50%;background:#25D366;color:white;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0;">' +
+                        '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-radius:8px;transition:background 0.12s;">' +
+                        '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#25D366,#128C7E);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' +
                         initials +
                         "</div>" +
-                        '<div style="margin-left:10px;flex:1;min-width:0;">' +
-                        '<div style="font-weight:500;font-size:13px;">' +
+                        '<div style="flex:1;min-width:0;">' +
+                        '<div style="font-weight:500;font-size:13px;color:#1a1a1a;">' +
                         frappe.utils.escape_html(c.name) +
                         "</div>" +
-                        msgPreview +
                         "</div>" +
-                        (time ? '<div style="font-size:10px;color:#aaa;flex-shrink:0;margin-left:8px;">' + time + "</div>" : "") +
                         "</div>";
                 });
             }
 
-            // Groups section
             if (groups.length > 0) {
-                html += '<div style="font-weight:600;padding:6px 12px;color:#555;font-size:12px;text-transform:uppercase;margin-top:6px;">Groups</div>';
+                html += '<div style="padding:8px 0 2px;color:#999;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Groups</div>';
                 groups.forEach(function (g) {
-                    const initials = getInitials(g.name);
+                    var initials = getInitials(g.name);
                     html +=
                         '<div class="wa-picker-item" data-chat-id="' +
                         frappe.utils.escape_html(g.id) +
-                        '" style="display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;transition:background 0.15s;">' +
-                        '<div style="width:36px;height:36px;border-radius:50%;background:#128C7E;color:white;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0;">' +
+                        '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-radius:8px;transition:background 0.12s;">' +
+                        '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#128C7E,#075E54);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' +
                         initials +
                         "</div>" +
-                        '<div style="margin-left:10px;flex:1;min-width:0;">' +
-                        '<div style="font-weight:500;font-size:13px;">' +
+                        '<div style="flex:1;min-width:0;">' +
+                        '<div style="font-weight:500;font-size:13px;color:#1a1a1a;">' +
                         frappe.utils.escape_html(g.name) +
                         "</div>" +
                         "</div>" +
                         "</div>";
                 });
             }
+            html += "</div>";
         }
 
         d.fields_dict.picker_html.$wrapper.html(html);
 
-        // Hover effects
+        // Hover + click
         d.fields_dict.picker_html.$wrapper
             .find(".wa-picker-item")
             .on("mouseenter", function () {
-                $(this).css("background", "#f5f5f5");
+                $(this).css("background", "#f0faf4");
             })
             .on("mouseleave", function () {
                 $(this).css("background", "");
             })
             .on("click", function () {
-                const chatId = $(this).data("chat-id");
-                const chatName = $(this).find("div[style*='font-weight:500']").first().text();
+                var chatId = $(this).data("chat-id");
+                var chatName = $(this).find("div[style*='font-weight:500']").first().text();
                 d.hide();
                 sendWithSelectedChat(doctype, name, print_format, _lang, chatId, chatName);
             });
     }
 
+    /* -----------------------------------------------------------
+       Helpers
+    ----------------------------------------------------------- */
     function filterPickerList(d) {
-        const query = d.fields_dict.search_input.get_value() || "";
-        renderPickerList(d, query);
+        renderPickerList(d, d.fields_dict.search_input.get_value() || "");
     }
 
     function getInitials(name) {
         if (!name) return "?";
-        const parts = name.trim().split(/\s+/);
-        if (parts.length >= 2) {
-            return (parts[0][0] + parts[1][0]).toUpperCase();
-        }
+        var parts = name.trim().split(/\s+/);
+        if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
         return name.substring(0, 2).toUpperCase();
-    }
-
-    function formatTimestamp(ts) {
-        try {
-            const d = new Date(ts * 1000);
-            const now = new Date();
-            const diffMs = now - d;
-            const diffDays = Math.floor(diffMs / 86400000);
-            if (diffDays === 0) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-            if (diffDays === 1) return "Yesterday";
-            if (diffDays < 7) return d.toLocaleDateString([], { weekday: "short" });
-            return d.toLocaleDateString([], { month: "short", day: "numeric" });
-        } catch (e) {
-            return "";
-        }
     }
 
     /* -----------------------------------------------------------
@@ -219,55 +313,46 @@
        Button injection into Print Preview toolbar
     ----------------------------------------------------------- */
     function getDocumentInfo() {
-        const route = (window.frappe && frappe.get_route) ? frappe.get_route() : [];
+        var route = (window.frappe && frappe.get_route) ? frappe.get_route() : [];
         if (route && route[0] === "print" && route[1] && route[2]) {
-            return {
-                doctype: route[1],
-                name: route.slice(2).join("/"),
-            };
+            return { doctype: route[1], name: route.slice(2).join("/") };
         }
         return null;
     }
 
     function getPrintFormat() {
         try {
-            const $pf = $("input[data-fieldname='print_format']:visible").first();
+            var $pf = $("input[data-fieldname='print_format']:visible").first();
             if ($pf.length) return $pf.val() || null;
-            const $pfHidden = $("input[data-fieldname='print_format']").first();
+            var $pfHidden = $("input[data-fieldname='print_format']").first();
             return $pfHidden.length ? $pfHidden.val() || null : null;
-        } catch (e) {
-            return null;
-        }
+        } catch (e) { return null; }
     }
 
     function getLanguage() {
         try {
-            const $l = $("input[data-fieldname='language']:visible").first();
+            var $l = $("input[data-fieldname='language']:visible").first();
             if ($l.length) return $l.val() || null;
-            const $lHidden = $("input[data-fieldname='language']").first();
+            var $lHidden = $("input[data-fieldname='language']").first();
             return $lHidden.length ? $lHidden.val() || null : null;
-        } catch (e) {
-            return null;
-        }
+        } catch (e) { return null; }
     }
 
     function hideTryNewMessage() {
         try {
-            const $msg = $(".inner-page-message, a[href*='print-designer']").filter(function () {
+            $(".inner-page-message, a[href*='print-designer']").filter(function () {
                 return $(this).text().indexOf("Try the new") >= 0 || ($(this).attr("href") || "").indexOf("print-designer") >= 0;
-            });
-            $msg.remove();
-            $msg.parent().remove();
+            }).remove().parent().remove();
         } catch (e) {}
     }
 
     function injectIntoToolbar() {
         try {
-            const $ca = $(".page-actions .custom-actions, .custom-actions");
+            var $ca = $(".page-actions .custom-actions, .custom-actions");
             if (!$ca || !$ca.length) return false;
             if ($ca.find(".btn-whatsapp-gc").length) return true;
 
-            const $btn = $(
+            var $btn = $(
                 '<button class="btn btn-sm btn-whatsapp-gc" title="Send PDF to WhatsApp" style="background-color:#25D366;border-color:#25D366;color:white;padding:4px 8px;">' +
                     WA_ICON +
                     "</button>"
@@ -278,41 +363,36 @@
                     alert("Frappe not yet loaded, please try again.");
                     return;
                 }
-                const doc = getDocumentInfo();
+                var doc = getDocumentInfo();
                 if (!doc) {
                     frappe.msgprint(__("Cannot determine document from URL."));
                     return;
                 }
                 showContactPicker(doc.doctype, doc.name, getPrintFormat(), getLanguage());
             });
-            const $refresh = $ca.find("button:contains('Refresh')").last();
-            if ($refresh.length) {
-                $refresh.after($btn);
-            } else {
-                $ca.prepend($btn);
-            }
+            var $refresh = $ca.find("button:contains('Refresh')").last();
+            if ($refresh.length) { $refresh.after($btn); }
+            else { $ca.prepend($btn); }
             return true;
-        } catch (e) {
-            return false;
-        }
+        } catch (e) { return false; }
     }
 
     function startInjector() {
         try {
-            let tries = 0;
-            const poll = () => {
+            var tries = 0;
+            function poll() {
                 if (injectIntoToolbar()) return;
                 if (++tries < 200) setTimeout(poll, 100);
-            };
+            }
             if (document.readyState === "loading") {
                 document.addEventListener("DOMContentLoaded", poll);
             } else {
                 poll();
             }
 
-            const waitForRouter = () => {
+            function waitForRouter() {
                 if (window.frappe && frappe.router && typeof frappe.router.on === "function") {
-                    frappe.router.on("change", () => {
+                    frappe.router.on("change", function () {
                         setTimeout(injectIntoToolbar, 100);
                         setTimeout(injectIntoToolbar, 500);
                         setTimeout(injectIntoToolbar, 1500);
@@ -327,7 +407,7 @@
                 } else {
                     setTimeout(waitForRouter, 100);
                 }
-            };
+            }
             waitForRouter();
         } catch (e) {}
     }
