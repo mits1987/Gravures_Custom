@@ -221,14 +221,17 @@ def send_print_pdf_whatsapp(doctype, name, print_format=None, chat_id=None):
 
 @frappe.whitelist()
 def get_whatsapp_chats():
-    """Fetch recent chats and groups from OpenWA for the contact picker.
+    """Fetch contacts and groups from OpenWA for the contact picker.
 
-    Returns a cached list (5-minute TTL) of chats and groups so the
-    frontend can display a searchable picker modal.
+    Uses the /contacts endpoint (which works) instead of the broken
+    /chats endpoint. Builds a combined list of individual contacts
+    and (when available) group chats from recent messages.
+
+    Responses are cached for 5 minutes.
 
     Response shape:
     {
-        "chats": [ {"id": "...", "name": "...", "isGroup": bool, "lastMessage": "...", "timestamp": int}, ... ],
+        "chats": [ {"id": "...", "name": "...", "isGroup": false, "timestamp": 0}, ... ],
         "groups": [ {"id": "...", "name": "..."}, ... ]
     }
     """
@@ -249,42 +252,85 @@ def get_whatsapp_chats():
     headers = {"X-API-Key": api_key}
     result = {"chats": [], "groups": []}
 
-    # Fetch recent chats (most recent first)
+    # Fetch contacts (replaces the broken /chats endpoint)
+    # The /contacts endpoint returns all known WhatsApp contacts with
+    # name, pushName, and their WhatsApp ID.
     try:
         r = requests.get(
-            "{0}/api/sessions/{1}/chats?limit=100".format(base_url.rstrip("/"), session_id),
+            "{0}/api/sessions/{1}/contacts?limit=100".format(base_url.rstrip("/"), session_id),
             headers=headers, timeout=15,
         )
         if r.ok:
-            chats = r.json() if isinstance(r.json(), list) else []
-            result["chats"] = [
-                {
-                    "id": c.get("id", ""),
-                    "name": c.get("name") or c.get("formattedName") or c.get("id", ""),
-                    "isGroup": c.get("isGroup", False),
-                    "lastMessage": (c.get("lastMessage") or "")[:80],
-                    "timestamp": c.get("timestamp", 0),
-                }
-                for c in chats
-                if not c.get("isGroup")  # separate DMs from groups
-            ]
+            contacts = r.json() if isinstance(r.json(), list) else []
+            seen = set()
+            for c in contacts:
+                cid = c.get("id", "")
+                if not cid or cid in seen:
+                    continue
+                seen.add(cid)
+                # Determine if this is a group or individual contact
+                is_group = "@g.us" in cid
+                name = (
+                    c.get("name")
+                    or c.get("pushName")
+                    or c.get("number")
+                    or cid
+                )
+                if is_group:
+                    result["groups"].append({
+                        "id": cid,
+                        "name": name,
+                    })
+                else:
+                    result["chats"].append({
+                        "id": cid,
+                        "name": name,
+                        "isGroup": False,
+                        "lastMessage": "",
+                        "timestamp": 0,
+                    })
     except Exception:
-        frappe.log_error(title="OpenWA chats fetch failed", message=frappe.get_traceback())
+        frappe.log_error(title="OpenWA contacts fetch failed", message=frappe.get_traceback())
 
-    # Fetch groups
+    # Try to get groups from /groups endpoint (may fail silently)
     try:
         r = requests.get(
-            "{0}/api/sessions/{1}/groups?limit=100".format(base_url.rstrip("/"), session_id),
+            "{0}/api/sessions/{1}/groups?limit=50".format(base_url.rstrip("/"), session_id),
             headers=headers, timeout=15,
         )
         if r.ok:
-            groups = r.json() if isinstance(r.json(), list) else []
+            groups = r.json() if isinstance(r.json(), list) else (
+                r.json().get("data", []) if isinstance(r.json(), dict) else []
+            )
             result["groups"] = [
                 {"id": g.get("id", ""), "name": g.get("name") or g.get("id", "")}
                 for g in groups
             ]
     except Exception:
-        frappe.log_error(title="OpenWA groups fetch failed", message=frappe.get_traceback())
+        # Groups endpoint may be broken like /chats — silently ignore
+        pass
+
+    # If groups endpoint failed, try to extract group info from recent messages
+    if not result["groups"]:
+        try:
+            r = requests.get(
+                "{0}/api/sessions/{1}/messages?limit=100".format(base_url.rstrip("/"), session_id),
+                headers=headers, timeout=15,
+            )
+            if r.ok:
+                body = r.json()
+                msgs = body.get("messages", []) if isinstance(body, dict) else body
+                group_map = {}
+                for m in msgs:
+                    cid = m.get("chatId", "")
+                    if "@g.us" in cid and cid not in group_map:
+                        group_map[cid] = {
+                            "id": cid,
+                            "name": m.get("chatName") or m.get("author", "").split("@")[0] or cid,
+                        }
+                result["groups"] = list(group_map.values())
+        except Exception:
+            pass
 
     # Cache for 5 minutes
     frappe.cache().set_value(cache_key, result, expires_in_sec=300)
@@ -1506,3 +1552,12 @@ def send_whatsapp_via_openwa(message=None, chat_id=None, file_data=None, file_ty
     except Exception as e:
         frappe.log_error(f"OpenWA send error: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@frappe.whitelist()
+def switch_theme(theme):
+    """Override for frappe.core.doctype.user.user.switch_theme.
+    Accepts 'Kreativ' in addition to the standard Light/Dark/Automatic."""
+    allowed = ["Light", "Dark", "Automatic", "Kreativ"]
+    if theme in allowed:
+        frappe.db.set_value("User", frappe.session.user, "desk_theme", theme)

@@ -6,7 +6,8 @@ app_email = "info@kreativ.com"
 app_license = "license"
 
 override_whitelisted_methods = {
-    "frappe.utils.print_format.download_pdf": "gravures_custom.overrides.download_pdf"
+    "frappe.utils.print_format.download_pdf": "gravures_custom.overrides.download_pdf",
+    "frappe.core.doctype.user.user.switch_theme": "gravures_custom.overrides.switch_theme",
 }
 
 fixtures = [
@@ -63,7 +64,11 @@ fixtures = [
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_js = "/assets/gravures_custom/js/print_whatsapp_v3.js"
+app_include_css = "/assets/gravures_custom/css/kreativ_theme.css"
+app_include_js = [
+    "/assets/gravures_custom/js/print_whatsapp_v3.js",
+    "/assets/gravures_custom/js/kreativ_theme_toggle.js",
+]
 
 # Login page environment marker: injects a "TESTING" banner on non-prod sites.
 # Detection runs in gravures_custom.login_marker.update_website_context which

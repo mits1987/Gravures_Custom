@@ -1,0 +1,503 @@
+/* ═══════════════════════════════════════════════════════
+   KREATIV BRAND THEME — Frappe native theme switcher
+   Scoped under html[data-theme-mode="kreativ"]
+   Designed with /impeccable product register guidance.
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] {
+  --brand-navy: #424566;
+  --brand-navy-dark: #34374f;
+  --brand-navy-deeper: #2d2f47;
+  --brand-navy-lighter: #eef0f5;
+  --brand-navy-med: #5c5f8a;
+  --brand-red: #e21d24;
+  --brand-red-dark: #b5181e;
+  --text-primary: #1a1e2b;
+  --text-secondary: #5a5f72;
+  --text-muted: #848a9c;
+  --border-light: #e5e7ec;
+  --border-input: #c8ccd6;
+  --bg-page: #f3f4f8;
+  --bg-surface: #ffffff;
+  --sidebar-text: #c8cce0;
+  --sidebar-text-secondary: #9599b3;
+  --sidebar-icon: #9599b3;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ═══════════════════════════════════════════════════════
+   SIDEBAR — Dark Navy Panel
+   Uses "Committed" color strategy (navy carries ~40% of surface).
+   Justified by brand identity requirement — acceptable per
+   product register: "A single surface can earn Committed."
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .body-sidebar {
+  background: var(--brand-navy-deeper) !important;
+  border-right: 1px solid rgba(255,255,255,0.06) !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .standard-sidebar-item {
+  border-radius: 8px !important;
+  margin: 2px 0 !important;
+  transition: background 0.15s ease !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .standard-sidebar-item .item-anchor,
+html[data-theme-mode="kreativ"] .body-sidebar .standard-sidebar-item .sidebar-item-label {
+  color: var(--sidebar-text) !important;
+  font-size: 13px !important;
+  font-weight: 450 !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .standard-sidebar-item svg {
+  color: var(--sidebar-icon) !important;
+  fill: var(--sidebar-icon) !important;
+  width: 18px !important;
+  height: 18px !important;
+}
+
+html[data-theme-mode="kreativ"] .standard-sidebar-item:not(.active-sidebar):hover {
+  background: rgba(255,255,255,0.08) !important;
+}
+
+html[data-theme-mode="kreativ"] .standard-sidebar-item:not(.active-sidebar):hover .item-anchor,
+html[data-theme-mode="kreativ"] .standard-sidebar-item:not(.active-sidebar):hover .sidebar-item-label {
+  color: #ffffff !important;
+}
+
+html[data-theme-mode="kreativ"] .standard-sidebar-item:not(.active-sidebar):hover svg {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
+
+html[data-theme-mode="kreativ"] .standard-sidebar-item.active-sidebar {
+  background: var(--brand-navy) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.1) !important;
+}
+
+html[data-theme-mode="kreativ"] .standard-sidebar-item.active-sidebar .item-anchor,
+html[data-theme-mode="kreativ"] .standard-sidebar-item.active-sidebar .sidebar-item-label {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+}
+
+html[data-theme-mode="kreativ"] .standard-sidebar-item.active-sidebar svg {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .divider {
+  border-top-color: rgba(255,255,255,0.1) !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .sidebar-header .header-title {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .sidebar-header .header-subtitle {
+  color: var(--sidebar-text-secondary) !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .sidebar-card {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  border-radius: 8px !important;
+}
+
+html[data-theme-mode="kreativ"] .body-sidebar .section-break {
+  color: var(--sidebar-text-secondary) !important;
+  font-size: 11px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.8px !important;
+}
+
+/* ─── SIDEBAR MODULE HEADER ───
+     Frappe's base CSS has `a:hover { background-color: #fff }`
+     which would make the header invisible (white bg + white text).
+     We override to keep the dark navy background on hover. */
+html[data-theme-mode="kreativ"] a.sidebar-header:hover {
+  background: transparent !important;
+}
+html[data-theme-mode="kreativ"] a.sidebar-header:hover .header-title {
+  color: #ffffff !important;
+}
+html[data-theme-mode="kreativ"] a.sidebar-header:hover .header-subtitle {
+  color: var(--sidebar-text-secondary) !important;
+}
+
+/* ─── DOCK / AWESOMEBAR (matches sidebar) ─── */
+html[data-theme-mode="kreativ"] .awesomplete > ul {
+  border: 1px solid var(--border-light) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.1) !important;
+  padding: 6px !important;
+}
+html[data-theme-mode="kreativ"] .awesomplete > ul li {
+  border-radius: 6px !important;
+  padding: 8px 14px !important;
+  transition: background 0.12s ease !important;
+}
+html[data-theme-mode="kreativ"] .awesomplete > ul li:hover {
+  background: var(--brand-navy-lighter) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   MAIN CONTENT — Light, clean workspace
+   "Product defaults to Restrained" — neutral bg, clean dividers
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .page-head {
+  border-bottom: 1px solid var(--border-light) !important;
+  background: var(--bg-surface) !important;
+}
+html[data-theme-mode="kreativ"] .page-body {
+  background: var(--bg-page) !important;
+}
+html[data-theme-mode="kreativ"] .navbar {
+  border-bottom: 1px solid var(--border-light) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.03) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   CARDS & SURFACES
+   Rounded but restrained — 12px max, not exaggerated.
+   Hover shadow uses brand hue for subtle brand presence.
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .widget,
+html[data-theme-mode="kreativ"] .panel,
+html[data-theme-mode="kreativ"] .form-section,
+html[data-theme-mode="kreativ"] .frappe-card {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03) !important;
+  transition: box-shadow 0.2s ease !important;
+}
+html[data-theme-mode="kreativ"] .widget:hover,
+html[data-theme-mode="kreativ"] .panel:hover {
+  box-shadow: 0 6px 20px rgba(66,69,102,0.07) !important;
+}
+html[data-theme-mode="kreativ"] .section-head {
+  border-bottom: 1px solid var(--border-light) !important;
+}
+html[data-theme-mode="kreativ"] .section-head .section-title {
+  font-weight: 600 !important;
+  font-size: 15px !important;
+  color: var(--brand-navy) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   BUTTONS — Full state vocabulary (default, hover, focus,
+   active, disabled). Brand navy for primary, red for danger.
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .btn-primary {
+  background: var(--brand-navy) !important;
+  border-color: var(--brand-navy) !important;
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+  transition: all 0.15s ease !important;
+}
+html[data-theme-mode="kreativ"] .btn-primary:hover {
+  background: var(--brand-navy-dark) !important;
+  border-color: var(--brand-navy-dark) !important;
+  box-shadow: 0 3px 10px rgba(66,69,102,0.25) !important;
+}
+html[data-theme-mode="kreativ"] .btn-primary:focus-visible {
+  outline: 2px solid var(--brand-navy-med) !important;
+  outline-offset: 2px !important;
+}
+html[data-theme-mode="kreativ"] .btn-primary:active {
+  background: #383b58 !important;
+  transform: scale(0.98) !important;
+}
+html[data-theme-mode="kreativ"] .btn-primary:disabled,
+html[data-theme-mode="kreativ"] .btn-primary.disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+}
+
+html[data-theme-mode="kreativ"] .btn-default {
+  border-radius: 8px !important;
+  transition: all 0.15s ease !important;
+}
+html[data-theme-mode="kreativ"] .btn-default:hover {
+  background: var(--brand-navy-lighter) !important;
+  border-color: var(--brand-navy-med) !important;
+}
+html[data-theme-mode="kreativ"] .btn-default:focus-visible {
+  outline: 2px solid var(--brand-navy-med) !important;
+  outline-offset: 2px !important;
+}
+html[data-theme-mode="kreativ"] .btn-default:active {
+  background: #e2e4ea !important;
+}
+html[data-theme-mode="kreativ"] .btn-default:disabled,
+html[data-theme-mode="kreativ"] .btn-default.disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+}
+
+html[data-theme-mode="kreativ"] .btn-danger {
+  background: var(--brand-red) !important;
+  border-color: var(--brand-red) !important;
+  transition: all 0.15s ease !important;
+}
+html[data-theme-mode="kreativ"] .btn-danger:hover {
+  background: var(--brand-red-dark) !important;
+  border-color: var(--brand-red-dark) !important;
+  box-shadow: 0 2px 8px rgba(226,29,36,0.25) !important;
+}
+html[data-theme-mode="kreativ"] .btn-danger:focus-visible {
+  outline: 2px solid var(--brand-red) !important;
+  outline-offset: 2px !important;
+}
+html[data-theme-mode="kreativ"] .btn-danger:active {
+  background: #a01419 !important;
+  transform: scale(0.98) !important;
+}
+html[data-theme-mode="kreativ"] .btn-danger:disabled,
+html[data-theme-mode="kreativ"] .btn-danger.disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+}
+
+html[data-theme-mode="kreativ"] .btn-success {
+  transition: all 0.15s ease !important;
+}
+html[data-theme-mode="kreativ"] .btn-success:hover {
+  box-shadow: 0 2px 8px rgba(30,130,70,0.2) !important;
+}
+html[data-theme-mode="kreativ"] .btn-warning {
+  transition: all 0.15s ease !important;
+}
+html[data-theme-mode="kreativ"] .btn-warning:hover {
+  box-shadow: 0 2px 8px rgba(200,145,0,0.2) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   FORM FIELDS — Full interactive state vocabulary
+   Focus ring uses brand navy at 10% opacity.
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .form-control,
+html[data-theme-mode="kreativ"] .control-input input,
+html[data-theme-mode="kreativ"] .control-input textarea {
+  border: 1px solid var(--border-input) !important;
+  border-radius: 8px !important;
+  background: var(--bg-surface) !important;
+  transition: all 0.15s ease !important;
+  padding: 8px 12px !important;
+  color: var(--text-primary) !important;
+  font-size: 13px !important;
+  min-height: 38px !important;
+}
+html[data-theme-mode="kreativ"] .form-control:hover,
+html[data-theme-mode="kreativ"] .control-input input:hover,
+html[data-theme-mode="kreativ"] .control-input textarea:hover {
+  border-color: var(--brand-navy-med) !important;
+}
+html[data-theme-mode="kreativ"] .form-control:focus,
+html[data-theme-mode="kreativ"] .control-input input:focus,
+html[data-theme-mode="kreativ"] .control-input textarea:focus {
+  border-color: var(--brand-navy) !important;
+  box-shadow: 0 0 0 3px rgba(66,69,102,0.1) !important;
+}
+html[data-theme-mode="kreativ"] .form-control:disabled,
+html[data-theme-mode="kreativ"] .control-input input:disabled,
+html[data-theme-mode="kreativ"] .control-input textarea:disabled {
+  background: #f5f6f8 !important;
+  color: var(--text-muted) !important;
+  cursor: not-allowed !important;
+  border-style: dashed !important;
+}
+html[data-theme-mode="kreativ"] .form-control.is-invalid {
+  border-color: var(--brand-red) !important;
+  box-shadow: 0 0 0 3px rgba(226,29,36,0.08) !important;
+}
+
+html[data-theme-mode="kreativ"] .control-label {
+  font-weight: 500 !important;
+  font-size: 12px !important;
+  color: var(--text-secondary) !important;
+  margin-bottom: 4px !important;
+}
+
+/* ─── READONLY FIELDS ───
+     Contrast: #5a5f72 on #f0f2f5 = 5.5:1 (passes ≥4.5) */
+html[data-theme-mode="kreativ"] .like-disabled-input,
+html[data-theme-mode="kreativ"] .frappe-control .control-value {
+  background: #f0f2f5 !important;
+  border: 1px dashed #d5d8e0 !important;
+  border-radius: 8px !important;
+  padding: 7px 12px !important;
+  color: var(--text-secondary) !important;
+  font-size: 13px !important;
+  min-height: 38px !important;
+  line-height: 1.5 !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   DROPDOWNS — Elevated with subtle shadow
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .dropdown-menu {
+  border: 1px solid var(--border-light) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.1) !important;
+  padding: 6px !important;
+}
+html[data-theme-mode="kreativ"] .dropdown-menu .dropdown-item {
+  border-radius: 6px !important;
+  padding: 8px 14px !important;
+  font-size: 13px !important;
+  transition: background 0.12s ease !important;
+}
+html[data-theme-mode="kreativ"] .dropdown-menu .dropdown-item:hover {
+  background: var(--brand-navy-lighter) !important;
+  color: var(--brand-navy) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   GRID / CHILD TABLES
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .grid-static-col {
+  background: #f0f2f5 !important;
+  color: var(--text-muted) !important;
+  padding: 8px 10px !important;
+  min-height: 38px !important;
+  border-right: 1px solid #eef0f2 !important;
+}
+html[data-theme-mode="kreativ"] .form-grid {
+  border: 1px solid var(--border-light) !important;
+  border-radius: 10px !important;
+  overflow: hidden !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   LIST VIEW
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .list-row-head {
+  background: var(--brand-navy-lighter) !important;
+  border-bottom: 2px solid #e8ebf0 !important;
+}
+html[data-theme-mode="kreativ"] .list-row-head .list-col-title {
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  color: var(--brand-navy) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.3px !important;
+}
+html[data-theme-mode="kreativ"] .list-row {
+  transition: background 0.12s ease !important;
+  border-bottom: 1px solid #f0f2f5 !important;
+}
+html[data-theme-mode="kreativ"] .list-row:hover {
+  background: #fafbfc !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   TABS
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .form-tabs .nav-item .nav-link {
+  transition: color 0.15s ease, border-color 0.15s ease !important;
+}
+html[data-theme-mode="kreativ"] .form-tabs .nav-item .nav-link:hover {
+  background: var(--brand-navy-lighter) !important;
+}
+html[data-theme-mode="kreativ"] .form-tabs .nav-item .nav-link.active {
+  color: var(--brand-navy) !important;
+  font-weight: 600 !important;
+  border-bottom: 2px solid var(--brand-navy) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   ALERTS
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .alert {
+  border-radius: 10px !important;
+  border: none !important;
+  padding: 12px 16px !important;
+}
+html[data-theme-mode="kreativ"] .alert-success {
+  background: #edfaf3 !important;
+  color: #0f6e3f !important;
+}
+html[data-theme-mode="kreativ"] .alert-warning {
+  background: #fff8e6 !important;
+  color: #8f6a00 !important;
+}
+html[data-theme-mode="kreativ"] .alert-danger {
+  background: #fef2f2 !important;
+  color: var(--brand-red-dark) !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   MODALS
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .modal-content {
+  border-radius: 16px !important;
+  border: none !important;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.15) !important;
+}
+html[data-theme-mode="kreativ"] .modal-header {
+  border-bottom: 1px solid #f0f0f0 !important;
+  padding: 18px 24px !important;
+}
+html[data-theme-mode="kreativ"] .modal-footer {
+  border-top: 1px solid #f0f0f0 !important;
+  padding: 14px 24px !important;
+}
+html[data-theme-mode="kreativ"] .modal-body {
+  padding: 20px 24px !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   TYPOGRAPHY
+   "One family is often right" — Frappe uses Inter, no change needed
+   "Fixed rem scale, not fluid" — no clamp, consistent sizes
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .page-title .title-text {
+  font-weight: 650 !important;
+  font-size: 20px !important;
+  color: var(--brand-navy-dark) !important;
+}
+
+html[data-theme-mode="kreativ"] {
+  scroll-behavior: smooth !important;
+}
+
+/* ═══════════════════════════════════════════════════════
+   SCROLLBAR — Per product register: "Reinventing standard
+   affordances for flavor" is banned. Using default browser
+   scrollbar. Removed custom styling.
+   ═══════════════════════════════════════════════════════ */
+
+/* (intentionally empty — standard scrollbar only) */
+
+/* ═══════════════════════════════════════════════════════
+   WHATSAPP BUTTON — Not altering default style here;
+   brand colors preserved from existing button definitions
+   ═══════════════════════════════════════════════════════ */
+
+html[data-theme-mode="kreativ"] .btn-whatsapp-gc {
+  transition: all 0.2s ease !important;
+}
+html[data-theme-mode="kreativ"] .btn-whatsapp-gc:hover {
+  transform: scale(1.08) !important;
+  box-shadow: 0 3px 12px rgba(37,211,102,0.35) !important;
+}

@@ -348,6 +348,8 @@
 
     function injectIntoToolbar() {
         try {
+            // Guard: only inject on print preview pages
+            if (!isPrintRoute()) return false;
             var $ca = $(".page-actions .custom-actions, .custom-actions");
             if (!$ca || !$ca.length) return false;
             if ($ca.find(".btn-whatsapp-gc").length) return true;
@@ -377,38 +379,62 @@
         } catch (e) { return false; }
     }
 
+    /* -----------------------------------------------------------
+       Injection engine — print-page only, persistent interval
+
+       Strategy: keep a single persistent timer that checks every
+       600ms whether we're on a print page and whether our button
+       is present. If not, inject.  The interval never stops, so
+       it catches first navigation AND refresh equally.
+
+       The route guard (`route[0] === "print"`) prevents injection
+       on non-print pages (form, list, etc.).
+    ----------------------------------------------------------- */
+
+    function isPrintRoute() {
+        try {
+            var route = frappe.get_route ? frappe.get_route() : [];
+            return route[0] === "print";
+        } catch (e) { return false; }
+    }
+
     function startInjector() {
         try {
-            var tries = 0;
-            function poll() {
-                if (injectIntoToolbar()) return;
-                if (++tries < 200) setTimeout(poll, 100);
-            }
-            if (document.readyState === "loading") {
-                document.addEventListener("DOMContentLoaded", poll);
-            } else {
-                poll();
+            var injectTimer = null;
+
+            function tryInject() {
+                if (!isPrintRoute()) return;
+                injectIntoToolbar();
             }
 
-            function waitForRouter() {
-                if (window.frappe && frappe.router && typeof frappe.router.on === "function") {
-                    frappe.router.on("change", function () {
-                        setTimeout(injectIntoToolbar, 100);
-                        setTimeout(injectIntoToolbar, 500);
-                        setTimeout(injectIntoToolbar, 1500);
-                        setTimeout(injectIntoToolbar, 3000);
-                        setTimeout(injectIntoToolbar, 5000);
-                        setTimeout(hideTryNewMessage, 200);
-                        setTimeout(hideTryNewMessage, 600);
-                        setTimeout(hideTryNewMessage, 1200);
-                    });
-                    setTimeout(injectIntoToolbar, 100);
-                    setTimeout(hideTryNewMessage, 200);
-                } else {
-                    setTimeout(waitForRouter, 100);
+            // Wait for Frappe to be ready, then start the
+            // persistent timer and register route handler.
+            function onFrappeReady() {
+                if (!window.frappe || !frappe.router || !frappe.get_route) {
+                    setTimeout(onFrappeReady, 100);
+                    return;
                 }
+
+                // Persistent check — never stops, catches all scenarios.
+                injectTimer = setInterval(tryInject, 600);
+
+                // Route change — try a few times with delays.
+                frappe.router.on("change", function () {
+                    var delays = [500, 1000, 2000, 4000];
+                    for (var i = 0; i < delays.length; i++) {
+                        (function (d) { setTimeout(tryInject, d); })(delays[i]);
+                    }
+                });
+
+                // Try once immediately for good measure.
+                setTimeout(tryInject, 400);
+
+                setTimeout(hideTryNewMessage, 200);
+                setTimeout(hideTryNewMessage, 600);
+                setTimeout(hideTryNewMessage, 1200);
             }
-            waitForRouter();
+
+            onFrappeReady();
         } catch (e) {}
     }
 
