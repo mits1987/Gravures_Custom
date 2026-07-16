@@ -6,7 +6,10 @@ import base64
 import re
 from urllib.parse import urljoin
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import sys
+print(f"DEBUG: gravures_custom.overrides module LOADED from {__file__}", file=sys.stderr)
 
 # ---------------------------------------------------------------------------
 # Circuit breaker — shared with kreativ_attendance.openwa_health
@@ -26,6 +29,48 @@ def _check_whatsapp_circuit_breaker():
             "WhatsApp service is temporarily unavailable (circuit breaker open). "
             "Please try again later. If the issue persists, check OpenWA health."
         )
+
+
+def _fetch_profile_pictures(base_url, session_id, headers, contact_ids, max_workers=10):
+    """Fetch profile picture URLs for multiple contacts in parallel.
+
+    Args:
+        base_url: OpenWA base URL
+        session_id: WhatsApp session ID
+        headers: Auth headers with X-API-Key
+        contact_ids: List of WhatsApp contact IDs (e.g., '919876543210@c.us')
+        max_workers: Max parallel requests
+
+    Returns:
+        Dict mapping contact_id -> profile_picture_url (or None if not found)
+    """
+    results = {}
+    base_url = base_url.rstrip("/")
+
+    def fetch_one(cid):
+        if "@g.us" in cid:  # Groups don't have profile pictures via this endpoint
+            return (cid, None)
+        try:
+            r = requests.get(
+                "{0}/api/sessions/{1}/contacts/{2}/profile-picture".format(
+                    base_url, session_id, cid
+                ),
+                headers=headers, timeout=8,
+            )
+            if r.ok:
+                data = r.json()
+                return (cid, data.get("url"))
+        except Exception:
+            pass
+        return (cid, None)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(fetch_one, cid) for cid in contact_ids]
+        for f in as_completed(futures):
+            cid, url = f.result()
+            results[cid] = url
+
+    return results
 
 
 @frappe.whitelist()
@@ -220,7 +265,7 @@ def send_print_pdf_whatsapp(doctype, name, print_format=None, chat_id=None):
 
 
 @frappe.whitelist()
-def get_whatsapp_chats():
+def get_whatsapp_chats(search=None):
     """Fetch contacts and groups from OpenWA for the contact picker.
 
     Uses the /contacts endpoint (which works) instead of the broken
@@ -229,6 +274,9 @@ def get_whatsapp_chats():
 
     Responses are cached for 5 minutes.
 
+    Args:
+        search: Optional search string to filter contacts by name/number
+
     Response shape:
     {
         "chats": [ {"id": "...", "name": "...", "isGroup": false, "timestamp": 0}, ... ],
@@ -236,6 +284,8 @@ def get_whatsapp_chats():
     }
     """
     cache_key = "openwa_chats_list"
+    if search:
+        cache_key = "openwa_chats_search_{}".format(frappe.safe_encode(search).decode()[:50])
     cached = frappe.cache().get_value(cache_key)
     if cached:
         return cached
@@ -257,16 +307,35 @@ def get_whatsapp_chats():
     # name, pushName, and their WhatsApp ID.
     try:
         r = requests.get(
-            "{0}/api/sessions/{1}/contacts?limit=100".format(base_url.rstrip("/"), session_id),
+            "{0}/api/sessions/{1}/contacts?limit=200".format(base_url.rstrip("/"), session_id),
             headers=headers, timeout=15,
         )
         if r.ok:
             contacts = r.json() if isinstance(r.json(), list) else []
             seen = set()
+            search_lower = (search or "").lower()
             for c in contacts:
                 cid = c.get("id", "")
                 if not cid or cid in seen:
                     continue
+                # Client-side filter if search provided (OpenWA doesn't support search param)
+                if search_lower:
+                    # Check all possible name fields - contact may have name as phone format
+                    # but number field without spaces/+, so check all
+                    name_fields = [
+                        c.get("name"),
+                        c.get("pushName"),
+                        c.get("formattedName"),
+                        c.get("shortName"),
+                        c.get("verifiedName"),
+                        c.get("notifyName"),
+                        c.get("number"),
+                        cid,
+                    ]
+                    name_fields = [f for f in name_fields if f]
+                    match = any(search_lower in f.lower() for f in name_fields)
+                    if not match:
+                        continue
                 seen.add(cid)
                 # Determine if this is a group or individual contact
                 is_group = "@g.us" in cid
@@ -288,9 +357,26 @@ def get_whatsapp_chats():
                         "isGroup": False,
                         "lastMessage": "",
                         "timestamp": 0,
+                        "profilePicture": None,  # placeholder, will populate below
                     })
     except Exception:
         frappe.log_error(title="OpenWA contacts fetch failed", message=frappe.get_traceback())
+
+    # Fetch profile pictures for individual contacts (parallel, cached)
+    if result["chats"]:
+        contact_ids = [c["id"] for c in result["chats"]]
+        pic_cache_key = "openwa_profile_pics"
+        pic_cache = frappe.cache().get_value(pic_cache_key) or {}
+
+        to_fetch = [cid for cid in contact_ids if cid not in pic_cache]
+        if to_fetch:
+            new_pics = _fetch_profile_pictures(base_url, session_id, headers, to_fetch)
+            pic_cache.update(new_pics)
+            frappe.cache().set_value(pic_cache_key, pic_cache, expires_in_sec=3600)
+
+        # Apply cached profile pictures
+        for c in result["chats"]:
+            c["profilePicture"] = pic_cache.get(c["id"])
 
     # Try to get groups from /groups endpoint (may fail silently)
     try:
@@ -332,9 +418,60 @@ def get_whatsapp_chats():
         except Exception:
             pass
 
-    # Cache for 5 minutes
-    frappe.cache().set_value(cache_key, result, expires_in_sec=300)
+    # Cache for 5 minutes (shorter for search results)
+    expires = 60 if search else 300
+    frappe.cache().set_value(cache_key, result, expires_in_sec=expires)
     return result
+
+
+import sys
+print(f"DEBUG: About to define search_whatsapp_contacts", file=sys.stderr)
+
+@frappe.whitelist()
+def search_whatsapp_contacts(query):
+    """Server-side search for WhatsApp contacts.
+
+    Called from the Print Preview WhatsApp contact picker when user
+    types in the search box or clicks the search button.
+
+    Note: frappe.call passes args as dict, so query may be {'query': '...'} or '...'
+    """
+    # Handle both string and dict (from frappe.call)
+    if isinstance(query, dict):
+        query = query.get('query', '')
+    if not query or len(query.strip()) < 1:
+        return {"chats": [], "groups": []}
+    return get_whatsapp_chats(search=query.strip())
+
+
+def _fetch_profile_pictures(base_url, session_id, headers, contact_ids):
+    """Fetch profile picture URLs for multiple contacts in parallel.
+
+    Returns dict: {contact_id: profile_picture_url_or_None}
+    """
+    import concurrent.futures
+
+    def fetch_one(cid):
+        try:
+            r = requests.get(
+                "{0}/api/sessions/{1}/contacts/{2}/profile-picture".format(
+                    base_url.rstrip("/"), session_id, cid
+                ),
+                headers=headers, timeout=10,
+            )
+            if r.ok:
+                data = r.json()
+                # OpenWA returns {"url": "..."} - extract the URL
+                return cid, data.get("url")
+        except Exception:
+            pass
+        return cid, None
+
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        for cid, url in executor.map(fetch_one, contact_ids):
+            results[cid] = url
+    return results
 
 
 def _screenshot_html(html_content, width=1000):

@@ -5,6 +5,9 @@
 (function () {
     "use strict";
 
+    console.log("[print_whatsapp_v3] IIFE started, current route:", frappe.get_route ? frappe.get_route() : "no route", "hash:", window.location.hash);
+    console.log("[print_whatsapp_v3] frappe ready:", window.frappe && frappe.router && frappe.get_route);
+
     const WA_ICON = '<svg viewBox="0 0 448 512" width="16" height="16" fill="white" style="vertical-align: top; margin: 2px 0 0 0;"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-32.6-16.3-54-29.1-75.5-66-5.7-9.8 5.7-9.1 16.3-30.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 35.2 15.2 49 16.5 66.6 13.9 10.7-1.6 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>';
 
     /* -----------------------------------------------------------
@@ -22,6 +25,7 @@
                 },
                 {
                     fieldtype: "Section Break",
+                    label: "Or search contacts",
                 },
                 {
                     fieldname: "search_input",
@@ -72,22 +76,76 @@
         // Style search field
         setTimeout(function () {
             var $searchInput = d.$wrapper.find('[data-fieldname="search_input"] input');
+            var $controlWrap = $searchInput.closest('.frappe-control');
+
             $searchInput.css({
                 "border-radius": "8px",
                 padding: "10px 14px",
-                "font-size": "13px",
-                background: "#f5f6f8",
-                border: "1px solid #e5e7eb",
-                width: "100%",
+                "font-size": "14px",
+                background: "#fff",
+                border: "1px solid #d0d5dd",
                 outline: "none",
-                "box-sizing": "border-box"
+                "box-sizing": "border-box",
+                flex: "1",
+                "min-width": "0",
+                transition: "all 0.2s",
+                "font-family": "inherit",
+                "-webkit-appearance": "none"
             });
             $searchInput.on("focus", function () {
-                $(this).css({ background: "#fff", "border-color": "#25D366" });
+                $(this).css({
+                    "border-color": "#25D366",
+                    "box-shadow": "0 0 0 3px rgba(37,211,102,0.1)"
+                });
             });
             $searchInput.on("blur", function () {
-                $(this).css({ background: "#f5f6f8", "border-color": "#e5e7eb" });
+                $(this).css({
+                    "border-color": "#d0d5dd",
+                    "box-shadow": "none"
+                });
             });
+            // Real-time server search on keystroke (debounced 300ms)
+            $searchInput.on("input", function () {
+                debouncedServerSearch(d);
+            });
+
+            // Find the control-input-wrapper which wraps the actual input - this is where we want the button
+            var $inputWrapper = $searchInput.closest('.control-input-wrapper');
+
+            // Ensure parent Frappe control wrapper takes full width (match manual send field width)
+            $inputWrapper.closest('.frappe-control').css('width', '100%');
+            $inputWrapper.closest('.control-input').css('width', '100%');
+
+            // Make the input wrapper a flex container matching manual send layout (gap + stretch)
+            $inputWrapper.css({
+                'display': 'flex',
+                'align-items': 'stretch',
+                'width': '100%',
+                'gap': '8px'
+            });
+
+            // Add search icon button as fallback (triggers server search)
+            var $searchBtn = $('<button type="button" aria-label="Search contacts" class="wa-search-btn" style="'
+                + 'padding:10px 20px;background:#25D366;color:white;border:none;'
+                + 'border-radius:8px;cursor:pointer;display:flex;align-items:center;'
+                + 'justify-content:center;transition:all 0.15s;'
+                + 'font-size:14px;font-weight:600;flex-shrink:0;box-sizing:border-box;'
+                + '-webkit-appearance:none;line-height:1;">'
+                + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"'
+                + ' stroke-linecap="round" stroke-linejoin="round">'
+                + '<circle cx="11" cy="11" r="8"></circle>'
+                + '<line x1="21" y1="21" x2="16.65" y2="16.65"></line>'
+                + '</svg>'
+                + '</button>');
+            $searchBtn.hover(
+                function () { $(this).css("background", "#128C7E"); },
+                function () { $(this).css("background", "#25D366"); }
+            );
+            $searchBtn.on("click", function () {
+                searchContactsServerSide(d);
+            });
+            // Append button INSIDE the control-input-wrapper (next to input)
+            $inputWrapper.append($searchBtn);
         }, 50);
 
         // Wire up the manual send
@@ -155,6 +213,15 @@
         });
     }
 
+    // Debounced server search - wait 300ms after last keystroke
+    var searchDebounceTimer = null;
+    function debouncedServerSearch(d) {
+        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(function () {
+            searchContactsServerSide(d);
+        }, 300);
+    }
+
     function getManualSendHtml() {
         return (
             '<div style="margin: 0 0 4px 0;">' +
@@ -209,13 +276,17 @@
                 html += '<div style="padding:8px 0 2px;color:#999;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Chats</div>';
                 chats.forEach(function (c) {
                     var initials = getInitials(c.name);
+                    var avatarHtml = '';
+                    if (c.profilePicture) {
+                        avatarHtml = '<img src="' + frappe.utils.escape_html(c.profilePicture) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+                    } else {
+                        avatarHtml = '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#25D366,#128C7E);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' + initials + '</div>';
+                    }
                     html +=
                         '<div class="wa-picker-item" data-chat-id="' +
                         frappe.utils.escape_html(c.id) +
                         '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-radius:8px;transition:background 0.12s;">' +
-                        '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#25D366,#128C7E);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' +
-                        initials +
-                        "</div>" +
+                        avatarHtml +
                         '<div style="flex:1;min-width:0;">' +
                         '<div style="font-weight:500;font-size:13px;color:#1a1a1a;">' +
                         frappe.utils.escape_html(c.name) +
@@ -229,13 +300,17 @@
                 html += '<div style="padding:8px 0 2px;color:#999;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Groups</div>';
                 groups.forEach(function (g) {
                     var initials = getInitials(g.name);
+                    var avatarHtml = '';
+                    if (g.profilePicture) {
+                        avatarHtml = '<img src="' + frappe.utils.escape_html(g.profilePicture) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
+                    } else {
+                        avatarHtml = '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#128C7E,#075E54);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' + initials + '</div>';
+                    }
                     html +=
                         '<div class="wa-picker-item" data-chat-id="' +
                         frappe.utils.escape_html(g.id) +
                         '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-radius:8px;transition:background 0.12s;">' +
-                        '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#128C7E,#075E54);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' +
-                        initials +
-                        "</div>" +
+                        avatarHtml +
                         '<div style="flex:1;min-width:0;">' +
                         '<div style="font-weight:500;font-size:13px;color:#1a1a1a;">' +
                         frappe.utils.escape_html(g.name) +
@@ -273,6 +348,34 @@
         renderPickerList(d, d.fields_dict.search_input.get_value() || "");
     }
 
+    function searchContactsServerSide(d) {
+        var query = (d.fields_dict.search_input.get_value() || "").trim();
+        if (!query) {
+            frappe.msgprint("Enter a name or number to search");
+            return;
+        }
+
+        // Show loading
+        var $picker = d.fields_dict.picker_html.$wrapper;
+        $picker.html('<div style="text-align:center;padding:30px;color:#999;font-size:13px;">Searching contacts...</div>');
+
+        frappe.call({
+            method: "gravures_custom.overrides.search_whatsapp_contacts",
+            args: { query: query },
+            callback: function (r) {
+                if (!r.message) {
+                    $picker.html('<div style="text-align:center;padding:30px;color:#e74c3c;">Search failed.</div>');
+                    return;
+                }
+                d._picker_data = r.message;
+                renderPickerList(d, query);
+            },
+            error: function () {
+                $picker.html('<div style="text-align:center;padding:30px;color:#e74c3c;">Error searching contacts.</div>');
+            },
+        });
+    }
+
     function getInitials(name) {
         if (!name) return "?";
         var parts = name.trim().split(/\s+/);
@@ -284,39 +387,61 @@
        Send PDF to selected chat
     ----------------------------------------------------------- */
     function sendWithSelectedChat(doctype, name, print_format, _lang, chatId, chatName) {
-        frappe.show_alert({ message: "Sending PDF to " + chatName + "...", indicator: "blue" });
+        // Confirm before sending
+        frappe.confirm(
+            "Send PDF to <b>" + frappe.utils.escape_html(chatName) + "</b> via WhatsApp?",
+            function () {
+                frappe.show_alert({ message: "Sending PDF to " + chatName + "...", indicator: "blue" });
 
-        frappe.call({
-            method: "gravures_custom.overrides.send_print_pdf_whatsapp",
-            args: {
-                doctype: doctype,
-                name: name,
-                print_format: print_format || undefined,
-                chat_id: chatId,
+                frappe.call({
+                    method: "gravures_custom.overrides.send_print_pdf_whatsapp",
+                    args: {
+                        doctype: doctype,
+                        name: name,
+                        print_format: print_format || undefined,
+                        chat_id: chatId,
+                    },
+                    callback: function (r) {
+                        if (r.message && r.message.success) {
+                            frappe.show_alert({ message: "Sent PDF to " + chatName + "!", indicator: "green" });
+                        } else if (r._server_messages) {
+                            frappe.msgprint(r._server_messages.join("<br>"));
+                        } else {
+                            frappe.msgprint("Unexpected response from server.");
+                        }
+                    },
+                    error: function (err) {
+                        frappe.msgprint("Failed: " + (err._message || "Unknown error."));
+                    },
+                });
             },
-            callback: function (r) {
-                if (r.message && r.message.success) {
-                    frappe.show_alert({ message: "Sent PDF to " + chatName + "!", indicator: "green" });
-                } else if (r._server_messages) {
-                    frappe.msgprint(r._server_messages.join("<br>"));
-                } else {
-                    frappe.msgprint("Unexpected response from server.");
-                }
-            },
-            error: function (err) {
-                frappe.msgprint("Failed: " + (err._message || "Unknown error."));
-            },
-        });
+            function () {
+                // User cancelled - do nothing
+            }
+        );
     }
 
     /* -----------------------------------------------------------
        Button injection into Print Preview toolbar
     ----------------------------------------------------------- */
     function getDocumentInfo() {
+        // Try frappe route first (works for doctype routes)
         var route = (window.frappe && frappe.get_route) ? frappe.get_route() : [];
         if (route && route[0] === "print" && route[1] && route[2]) {
             return { doctype: route[1], name: route.slice(2).join("/") };
         }
+
+        // Fallback: parse from URL hash (print preview uses hash routing like #print/print/Doctype/Name)
+        try {
+            var hash = window.location.hash;
+            if (hash.startsWith('#')) hash = hash.substring(1);
+            if (hash.startsWith('/')) hash = hash.substring(1);
+            var parts = hash.split('/');
+            if (parts[0] === "print" && parts[1] && parts[2]) {
+                return { doctype: parts[1], name: parts.slice(2).join("/") };
+            }
+        } catch (e) {}
+
         return null;
     }
 
@@ -346,18 +471,31 @@
         } catch (e) {}
     }
 
+
     function injectIntoToolbar() {
         try {
+            console.log('[print_whatsapp_v3] injectIntoToolbar called');
             // Guard: only inject on print preview pages
-            if (!isPrintRoute()) return false;
+            if (!isPrintRoute()) { console.log('[print_whatsapp_v3] isPrintRoute false'); return false; }
+
+            // Check if button already exists in toolbar
+            if ($(".page-actions .custom-actions .btn-whatsapp-gc, .custom-actions .btn-whatsapp-gc").length) {
+                console.log('[print_whatsapp_v3] button already exists');
+                return true;
+            }
+
             var $ca = $(".page-actions .custom-actions, .custom-actions");
-            if (!$ca || !$ca.length) return false;
-            if ($ca.find(".btn-whatsapp-gc").length) return true;
+            console.log('[print_whatsapp_v3] custom-actions found:', $ca.length);
+
+            if (!$ca || !$ca.length) { console.log('[print_whatsapp_v3] no custom-actions'); return false; }
+
+            // Make custom-actions visible on print preview (it has hide class)
+            $ca.removeClass('hide hidden-xs hidden-md');
 
             var $btn = $(
                 '<button class="btn btn-sm btn-whatsapp-gc" title="Send PDF to WhatsApp" style="background-color:#25D366;border-color:#25D366;color:white;padding:4px 8px;">' +
                     WA_ICON +
-                    "</button>"
+                "</button>"
             );
             $btn.on("click", function (e) {
                 e.preventDefault();
@@ -372,13 +510,14 @@
                 }
                 showContactPicker(doc.doctype, doc.name, getPrintFormat(), getLanguage());
             });
+            // Insert next to Refresh button (last) or prepend
             var $refresh = $ca.find("button:contains('Refresh')").last();
             if ($refresh.length) { $refresh.after($btn); }
             else { $ca.prepend($btn); }
+            console.log('[print_whatsapp_v3] button injected in toolbar');
             return true;
-        } catch (e) { return false; }
+        } catch (e) { console.error('[print_whatsapp_v3] inject error:', e); return false; }
     }
-
     /* -----------------------------------------------------------
        Injection engine — print-page only, persistent interval
 
@@ -394,8 +533,19 @@
     function isPrintRoute() {
         try {
             var route = frappe.get_route ? frappe.get_route() : [];
-            return route[0] === "print";
-        } catch (e) { return false; }
+            if (route[0] === "print") return true;
+        } catch (e) {}
+
+        // Fallback: check URL hash for print pages
+        try {
+            var hash = window.location.hash;
+            if (hash.startsWith('#')) hash = hash.substring(1);
+            if (hash.startsWith('/')) hash = hash.substring(1);
+            var parts = hash.split('/');
+            if (parts[0] === "print") return true;
+        } catch (e) {}
+
+        return false;
     }
 
     function startInjector() {
@@ -403,7 +553,9 @@
             var injectTimer = null;
 
             function tryInject() {
-                if (!isPrintRoute()) return;
+                var isPrint = isPrintRoute();
+                console.log('[print_whatsapp_v3] tryInject: isPrintRoute=', isPrint, 'hash=', window.location.hash);
+                if (!isPrint) return;
                 injectIntoToolbar();
             }
 
@@ -415,11 +567,13 @@
                     return;
                 }
 
+                console.log('[print_whatsapp_v3] Frappe ready, starting interval');
                 // Persistent check — never stops, catches all scenarios.
                 injectTimer = setInterval(tryInject, 600);
 
                 // Route change — try a few times with delays.
                 frappe.router.on("change", function () {
+                    console.log('[print_whatsapp_v3] router change event');
                     var delays = [500, 1000, 2000, 4000];
                     for (var i = 0; i < delays.length; i++) {
                         (function (d) { setTimeout(tryInject, d); })(delays[i]);
@@ -435,8 +589,11 @@
             }
 
             onFrappeReady();
-        } catch (e) {}
+        } catch (e) {
+            console.error('[print_whatsapp_v3] startInjector error:', e);
+        }
     }
 
+    console.log('[WA Print] startInjector called');
     startInjector();
 })();
