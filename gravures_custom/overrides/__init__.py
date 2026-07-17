@@ -24,8 +24,6 @@ from gravures_custom.gravures_custom.doctype.whatsapp_send_log.whatsapp_send_log
 	update_log_status as update_whatsapp_log_status,
 )
 
-import sys
-print(f"DEBUG: gravures_custom.overrides module LOADED from {__file__}", file=sys.stderr)
 
 # ---------------------------------------------------------------------------
 # Circuit breaker — delegates to consolidated whatsapp_queue module
@@ -291,7 +289,8 @@ def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, lette
     with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
         f.write(html)
         html_path = f.name
-    pdf_path = tempfile.mktemp(suffix='.pdf')
+    fd, pdf_path = tempfile.mkstemp(suffix='.pdf')
+    os.close(fd)
     try:
         cmd = [_chrome_path(), '--headless', '--no-sandbox', '--disable-gpu',
                '--force-device-scale-factor=2',
@@ -606,9 +605,6 @@ def get_whatsapp_chats(search=None):
     return result
 
 
-import sys
-print(f"DEBUG: About to define search_whatsapp_contacts", file=sys.stderr)
-
 @frappe.whitelist()
 def search_whatsapp_contacts(query):
     """Server-side search for WhatsApp contacts.
@@ -626,36 +622,6 @@ def search_whatsapp_contacts(query):
     return get_whatsapp_chats(search=query.strip())
 
 
-def _fetch_profile_pictures(base_url, session_id, headers, contact_ids):
-    """Fetch profile picture URLs for multiple contacts in parallel.
-
-    Returns dict: {contact_id: profile_picture_url_or_None}
-    """
-    import concurrent.futures
-
-    def fetch_one(cid):
-        try:
-            r = requests.get(
-                "{0}/api/sessions/{1}/contacts/{2}/profile-picture".format(
-                    base_url.rstrip("/"), session_id, cid
-                ),
-                headers=headers, timeout=10,
-            )
-            if r.ok:
-                data = r.json()
-                # OpenWA returns {"url": "..."} - extract the URL
-                return cid, data.get("url")
-        except Exception:
-            pass
-        return cid, None
-
-    results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        for cid, url in executor.map(fetch_one, contact_ids):
-            results[cid] = url
-    return results
-
-
 def _screenshot_html(html_content, width=1000):
     """Render HTML to full-page PNG via Chromium headless, return raw PNG bytes.
 
@@ -669,7 +635,8 @@ def _screenshot_html(html_content, width=1000):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
         f.write(html_content)
         html_path = f.name
-    png_path = tempfile.mktemp(suffix='.png')
+    fd, png_path = tempfile.mkstemp(suffix='.png')
+    os.close(fd)
     try:
         # Large height (20000) forces Chromium to render full document
         # --hide-scrollbars prevents scrollbar artifacts
