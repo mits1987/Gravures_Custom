@@ -165,15 +165,19 @@ def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, letterhe
 # ---------------------------------------------------------------------------
 
 def _chrome_path():
-    """Return path to Chrome/Chromium binary. Uses shutil.which for portability."""
+    """Return path to Chrome/Chromium binary. Uses shutil.which for portability.
+
+    Checks known binary names first (portable across systems), then
+    falls back to the known working path on this server.
+    """
     import shutil
-    # Prioritize the known working headless_shell first (avoids broken chromium on this system)
-    for binary in ("/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell",
-                   "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"):
+    for binary in ("chromium", "chromium-browser", "google-chrome",
+                   "google-chrome-stable", "chrome",
+                   "/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell"):
         path = shutil.which(binary) if not binary.startswith("/") else binary
         if path and os.path.exists(path):
             return path
-    return "/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell"
+    return shutil.which("chromium") or shutil.which("google-chrome") or "/usr/bin/chromium"
 
 
 def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, letterhead=None):
