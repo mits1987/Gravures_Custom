@@ -267,26 +267,6 @@ def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, lette
             os.unlink(pdf_path)
 
 
-def _log_whatsapp_send(source_doctype, source_docname, recipient, recipient_display,
-                        message_type, source_print_format="", meta=None):
-    """Create a WhatsApp Send Log entry. Returns the log name."""
-    from ..doctype.whatsapp_send_log.whatsapp_send_log import create_log
-    try:
-        return create_log(
-            source_doctype=source_doctype,
-            source_docname=source_docname,
-            recipient=recipient,
-            recipient_display=recipient_display,
-            message_type=message_type,
-            source_print_format=source_print_format,
-            meta=meta or {},
-            sent_by=frappe.session.user,
-        )
-    except Exception:
-        frappe.log_error("Failed to create WhatsApp Send Log", frappe.get_traceback())
-        return None
-
-
 def _update_log_result(log_name, success, error_message=None):
     """Update a WhatsApp Send Log entry with send result."""
     if not log_name:
@@ -960,7 +940,7 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
         width=2400,
         source_doctype="Sales Order",
         source_docname=date_label,
-        message_type="Engraving PDF",
+        message_type="Print PDF",
         meta={"from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1020,7 +1000,7 @@ table{{border-collapse:collapse;width:auto;}}
         width=600,
         source_doctype="Sales Order",
         source_docname=_format_date_range(from_date, to_date),
-        message_type="Engraving Monthly PDF",
+        message_type="Print PDF",
         meta={"from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1104,7 +1084,7 @@ def send_proofing_whatsapp(from_date=None, to_date=None):
         html, "Proofing_{0}.png".format(from_date), caption,
         source_doctype="Sales Order",
         source_docname=date_label,
-        message_type="Proofing PDF",
+        message_type="Print PDF",
         meta={"from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1175,7 +1155,7 @@ def send_dispatch_customer_whatsapp(from_date=None, to_date=None):
         html, "CustomerDispatch_{0}.png".format(from_date), caption,
         source_doctype="Sales Order",
         source_docname=date_label,
-        message_type="Customer Dispatch PDF",
+        message_type="Dispatch PDF",
         meta={"from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1233,7 +1213,7 @@ def send_dispatch_monthly_whatsapp(from_date=None, to_date=None):
         html, "MonthlyDispatch_{0}.png".format(from_date), caption,
         source_doctype="Sales Order",
         source_docname=date_label,
-        message_type="Monthly Dispatch PDF",
+        message_type="Print PDF",
         meta={"from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1293,7 +1273,7 @@ def send_dispatch_yearly_whatsapp(from_date=None, to_date=None):
         html, "DispatchYearly_{0}.png".format(from_date), caption,
         source_doctype="Sales Order",
         source_docname=date_label,
-        message_type="Yearly Dispatch PDF",
+        message_type="Print PDF",
         meta={"from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1366,7 +1346,7 @@ def send_job_status_whatsapp(from_date=None, to_date=None):
         html, "JobStatus_{0}.png".format(from_date), caption,
         source_doctype="Sales Order",
         source_docname=date_label,
-        message_type="Job Status PDF",
+        message_type="Print PDF",
         meta={"from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1586,7 +1566,7 @@ def send_monthly_report_whatsapp(month=None):
         html, "Monthly_{0}.png".format(month), caption,
         source_doctype="Sales Order",
         source_docname=month,
-        message_type="Monthly Report PDF",
+        message_type="Print PDF",
         meta={"month": month, "from_date": from_date, "to_date": to_date, "caption": caption},
     )
 
@@ -1653,7 +1633,7 @@ def send_test_whatsapp():
         source_doctype="System",
         source_docname="",
         recipient=settings.chat_id,
-        message_type="Test",
+        message_type="Custom",
         meta={"test": True},
     )
 
