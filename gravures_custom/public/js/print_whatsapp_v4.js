@@ -293,74 +293,85 @@
         var data = d._picker_data || { chats: [], groups: [] };
         var q = (query || "").toLowerCase();
         var html = "";
+        var now = Math.floor(Date.now() / 1000);
+
+        // Helper: format timestamp as relative time
+        function formatTime(ts) {
+            if (!ts) return "";
+            var diff = now - ts;
+            if (diff < 60) return "now";
+            if (diff < 3600) return Math.floor(diff / 60) + "m";
+            if (diff < 86400) return Math.floor(diff / 3600) + "h";
+            var d = new Date(ts * 1000);
+            var dd = String(d.getDate()).padStart(2, "0");
+            var mm = String(d.getMonth() + 1).padStart(2, "0");
+            return dd + "/" + mm;
+        }
+
+        // Helper: truncate last message to 50 chars
+        function truncateMsg(msg) {
+            if (!msg) return "";
+            return msg.length > 50 ? msg.substring(0, 50) + "…" : msg;
+        }
 
         // Filter
-        var chats = (data.chats || []).filter(function (c) {
+        function matchItem(item) {
             if (!q) return true;
             return (
-                (c.name || "").toLowerCase().indexOf(q) >= 0 ||
-                (c.id || "").indexOf(q) >= 0
+                (item.name || "").toLowerCase().indexOf(q) >= 0 ||
+                (item.id || "").indexOf(q) >= 0 ||
+                (item.lastMessage || "").toLowerCase().indexOf(q) >= 0
             );
-        });
-        var groups = (data.groups || []).filter(function (g) {
-            if (!q) return true;
-            return (
-                (g.name || "").toLowerCase().indexOf(q) >= 0 ||
-                (g.id || "").indexOf(q) >= 0
-            );
-        });
+        }
+        var chats = (data.chats || []).filter(matchItem);
+        var groups = (data.groups || []).filter(matchItem);
 
         if (chats.length === 0 && groups.length === 0) {
-            html = '<div style="max-height:340px;overflow-y:auto;"><div style="text-align:center;padding:40px 20px;color:#999;font-size:13px;">No contacts found.</div></div>';
+            html = '<div style="max-height:340px;overflow-y:auto;"><div style="text-align:center;padding:40px 20px;color:#999;font-size:13px;">No chats found.</div></div>';
         } else {
             html = '<div style="max-height:340px;overflow-y:auto;">';
 
+            // Render a single chat item (used for both individual chats and groups)
+            function renderItem(item, isGroup) {
+                var initials = getInitials(item.name);
+                var avatarBg = isGroup
+                    ? 'linear-gradient(135deg,#128C7E,#075E54)'
+                    : 'linear-gradient(135deg,#25D366,#128C7E)';
+                var avatarHtml = '<div style="width:36px;height:36px;border-radius:50%;background:' + avatarBg + ';color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' + initials + '</div>';
+
+                var lastMsg = truncateMsg(item.lastMessage);
+                var timeStr = formatTime(item.timestamp);
+                var unread = item.unreadCount || 0;
+                var unreadBadge = unread > 0
+                    ? '<div style="background:#25D366;color:white;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0;">' + unread + '</div>'
+                    : '';
+
+                html +=
+                    '<div class="wa-picker-item" data-chat-id="' +
+                    frappe.utils.escape_html(item.id) +
+                    '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-radius:8px;transition:background 0.12s;">' +
+                    avatarHtml +
+                    '<div style="flex:1;min-width:0;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                    '<div style="font-weight:500;font-size:13px;color:#1a1a1a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                    frappe.utils.escape_html(item.name) +
+                    "</div>" +
+                    (timeStr ? '<div style="font-size:10px;color:#999;flex-shrink:0;margin-left:4px;">' + timeStr + "</div>" : "") +
+                    "</div>" +
+                    (lastMsg ? '<div style="font-size:11px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px;">' + frappe.utils.escape_html(lastMsg) + "</div>" : "") +
+                    "</div>" +
+                    unreadBadge +
+                    "</div>";
+            }
+
             if (chats.length > 0) {
                 html += '<div style="padding:8px 0 2px;color:#999;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Chats</div>';
-                chats.forEach(function (c) {
-                    var initials = getInitials(c.name);
-                    var avatarHtml = '';
-                    if (c.profilePicture) {
-                        avatarHtml = '<img src="' + frappe.utils.escape_html(c.profilePicture) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
-                    } else {
-                        avatarHtml = '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#25D366,#128C7E);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' + initials + '</div>';
-                    }
-                    html +=
-                        '<div class="wa-picker-item" data-chat-id="' +
-                        frappe.utils.escape_html(c.id) +
-                        '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-radius:8px;transition:background 0.12s;">' +
-                        avatarHtml +
-                        '<div style="flex:1;min-width:0;">' +
-                        '<div style="font-weight:500;font-size:13px;color:#1a1a1a;">' +
-                        frappe.utils.escape_html(c.name) +
-                        "</div>" +
-                        "</div>" +
-                        "</div>";
-                });
+                chats.forEach(function (c) { renderItem(c, false); });
             }
 
             if (groups.length > 0) {
                 html += '<div style="padding:8px 0 2px;color:#999;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Groups</div>';
-                groups.forEach(function (g) {
-                    var initials = getInitials(g.name);
-                    var avatarHtml = '';
-                    if (g.profilePicture) {
-                        avatarHtml = '<img src="' + frappe.utils.escape_html(g.profilePicture) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;">';
-                    } else {
-                        avatarHtml = '<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#128C7E,#075E54);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;">' + initials + '</div>';
-                    }
-                    html +=
-                        '<div class="wa-picker-item" data-chat-id="' +
-                        frappe.utils.escape_html(g.id) +
-                        '" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-radius:8px;transition:background 0.12s;">' +
-                        avatarHtml +
-                        '<div style="flex:1;min-width:0;">' +
-                        '<div style="font-weight:500;font-size:13px;color:#1a1a1a;">' +
-                        frappe.utils.escape_html(g.name) +
-                        "</div>" +
-                        "</div>" +
-                        "</div>";
-                });
+                groups.forEach(function (g) { renderItem(g, true); });
             }
             html += "</div>";
         }

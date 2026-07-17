@@ -6,7 +6,6 @@ import base64
 import re
 from urllib.parse import urljoin
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from frappe.utils.file_manager import get_file_path as get_file_path_util
 
 try:
@@ -81,49 +80,6 @@ def _update_log_result(log_name: str, success: bool, error_message: str = ""):
             message=frappe.get_traceback(),
         )
 
-def _fetch_profile_pictures(base_url, session_id, headers, contact_ids, max_workers=10):
-    """Fetch profile picture URLs for multiple contacts in parallel.
-
-    Args:
-        base_url: OpenWA base URL
-        session_id: WhatsApp session ID
-        headers: Auth headers with X-API-Key
-        contact_ids: List of WhatsApp contact IDs (e.g., '919876543210@c.us')
-        max_workers: Max parallel requests
-
-    Returns:
-        Dict mapping contact_id -> profile_picture_url (or None if not found)
-    """
-    results = {}
-    base_url = base_url.rstrip("/")
-
-    def fetch_one(cid):
-        if "@g.us" in cid:  # Groups don't have profile pictures via this endpoint
-            return (cid, None)
-        try:
-            r = requests.get(
-                "{0}/api/sessions/{1}/contacts/{2}/profile-picture".format(
-                    base_url, session_id, cid
-                ),
-                headers=headers, timeout=8,
-            )
-            if r.ok:
-                data = r.json()
-                return (cid, data.get("url"))
-        except Exception:
-            pass
-        return (cid, None)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(fetch_one, cid) for cid in contact_ids]
-        for f in as_completed(futures):
-            cid, url = f.result()
-            results[cid] = url
-
-    return results
-
-
-@frappe.whitelist()
 def validate_phone_number(phone: str, default_country: str = "IN") -> dict:
     """Validate and format a phone number for WhatsApp.
 
@@ -405,21 +361,26 @@ def send_print_pdf_whatsapp(doctype, name, print_format=None, chat_id=None):
 
 @frappe.whitelist()
 def get_whatsapp_chats(search=None):
-    """Fetch contacts and groups from OpenWA for the contact picker.
+    """Fetch recent chats from OpenWA for the contact picker.
 
-    Uses the /contacts endpoint (which works) instead of the broken
-    /chats endpoint. Builds a combined list of individual contacts
-    and (when available) group chats from recent messages.
+    Uses the /chats endpoint which returns recent conversations with
+    last message previews, unread counts, and timestamps. Works with
+    OpenWA v0.8.19+ (the previous /contacts endpoint was a fallback for
+    when /chats was broken).
 
     Responses are cached for 5 minutes.
 
     Args:
-        search: Optional search string to filter contacts by name/number
+        search: Optional search string to filter chats by name/number
 
     Response shape:
     {
-        "chats": [ {"id": "...", "name": "...", "isGroup": false, "timestamp": 0}, ... ],
-        "groups": [ {"id": "...", "name": "..."}, ... ]
+        "chats": [ {"id": "...", "name": "...", "isGroup": false,
+                     "lastMessage": "...", "timestamp": 1234567890,
+                     "unreadCount": 0}, ... ],
+        "groups": [ {"id": "...", "name": "...", "isGroup": true,
+                     "lastMessage": "...", "timestamp": 1234567890,
+                     "unreadCount": 0}, ... ]
     }
 
     Permission: Blocked for Employee, Graphics, Proofing, Engraving roles
@@ -427,7 +388,6 @@ def get_whatsapp_chats(search=None):
     All other roles allowed.
     """
     # --- Permission check: whitelist admin roles, block restricted roles ---
-    # Admin roles that always have access (even if they also have restricted roles)
     admin_roles = {
         "System Manager",
         "Administrator",
@@ -443,7 +403,6 @@ def get_whatsapp_chats(search=None):
         "Copper Production Manager",
     }
 
-    # Roles that should be blocked (unless user also has admin role)
     restricted_roles = {
         "Employee Self Service",
         "Employee",
@@ -454,13 +413,11 @@ def get_whatsapp_chats(search=None):
 
     user_roles = set(frappe.get_roles())
 
-    # Allow if user has any admin role
     if user_roles & admin_roles:
         pass  # allowed
-    # Block if user has restricted roles and NO admin role
     elif user_roles & restricted_roles:
         frappe.throw(
-            "You are not permitted to access WhatsApp contacts.",
+            "You are not permitted to access WhatsApp chats.",
             frappe.PermissionError,
         )
 
@@ -483,121 +440,57 @@ def get_whatsapp_chats(search=None):
     headers = {"X-API-Key": api_key}
     result = {"chats": [], "groups": []}
 
-    # Fetch contacts (replaces the broken /chats endpoint)
-    # The /contacts endpoint returns all known WhatsApp contacts with
-    # name, pushName, and their WhatsApp ID.
+    # Fetch recent chats from OpenWA /chats endpoint
+    # This returns real conversations with last message previews,
+    # unread counts, timestamps — all sorted by most recent activity.
     try:
         r = requests.get(
-            "{0}/api/sessions/{1}/contacts?limit=200".format(base_url.rstrip("/"), session_id),
+            "{0}/api/sessions/{1}/chats".format(base_url.rstrip("/"), session_id),
             headers=headers, timeout=15,
         )
         if r.ok:
-            contacts = r.json() if isinstance(r.json(), list) else []
+            chats = r.json() if isinstance(r.json(), list) else []
             seen = set()
             search_lower = (search or "").lower()
-            for c in contacts:
+
+            # Sort by timestamp descending (most recent first)
+            chats.sort(key=lambda c: c.get("timestamp") or 0, reverse=True)
+
+            for c in chats:
                 cid = c.get("id", "")
                 if not cid or cid in seen:
                     continue
-                # Client-side filter if search provided (OpenWA doesn't support search param)
-                if search_lower:
-                    # Check all possible name fields - contact may have name as phone format
-                    # but number field without spaces/+, so check all
-                    name_fields = [
-                        c.get("name"),
-                        c.get("pushName"),
-                        c.get("formattedName"),
-                        c.get("shortName"),
-                        c.get("verifiedName"),
-                        c.get("notifyName"),
-                        c.get("number"),
-                        cid,
-                    ]
-                    name_fields = [f for f in name_fields if f]
-                    match = any(search_lower in f.lower() for f in name_fields)
-                    if not match:
-                        continue
                 seen.add(cid)
-                # Determine if this is a group or individual contact
-                is_group = "@g.us" in cid
-                name = (
-                    c.get("name")
-                    or c.get("pushName")
-                    or c.get("number")
-                    or cid
-                )
+
+                is_group = c.get("isGroup", False) or "@g.us" in cid
+                name = c.get("name") or cid
+                last_message = c.get("lastMessage") or ""
+                unread = c.get("unreadCount") or 0
+                ts = c.get("timestamp") or 0
+
+                # Client-side filter if search provided
+                if search_lower:
+                    name_match = search_lower in name.lower()
+                    id_match = search_lower in cid.lower()
+                    msg_match = last_message and search_lower in last_message.lower()
+                    if not (name_match or id_match or msg_match):
+                        continue
+
+                item = {
+                    "id": cid,
+                    "name": name,
+                    "isGroup": is_group,
+                    "lastMessage": last_message,
+                    "timestamp": ts,
+                    "unreadCount": unread,
+                }
+
                 if is_group:
-                    result["groups"].append({
-                        "id": cid,
-                        "name": name,
-                    })
+                    result["groups"].append(item)
                 else:
-                    result["chats"].append({
-                        "id": cid,
-                        "name": name,
-                        "isGroup": False,
-                        "lastMessage": "",
-                        "timestamp": 0,
-                        "profilePicture": None,  # placeholder, will populate below
-                    })
+                    result["chats"].append(item)
     except Exception:
-        frappe.log_error(title="OpenWA contacts fetch failed", message=frappe.get_traceback())
-
-    # Fetch profile pictures for individual contacts (parallel, cached)
-    if result["chats"]:
-        contact_ids = [c["id"] for c in result["chats"]]
-        pic_cache_key = "openwa_profile_pics"
-        pic_cache = frappe.cache().get_value(pic_cache_key) or {}
-
-        to_fetch = [cid for cid in contact_ids if cid not in pic_cache]
-        if to_fetch:
-            new_pics = _fetch_profile_pictures(base_url, session_id, headers, to_fetch)
-            pic_cache.update(new_pics)
-            frappe.cache().set_value(pic_cache_key, pic_cache, expires_in_sec=3600)
-
-        # Apply cached profile pictures
-        for c in result["chats"]:
-            c["profilePicture"] = pic_cache.get(c["id"])
-
-    # Try to get groups from /groups endpoint (may fail silently)
-    try:
-        r = requests.get(
-            "{0}/api/sessions/{1}/groups?limit=50".format(base_url.rstrip("/"), session_id),
-            headers=headers, timeout=15,
-        )
-        if r.ok:
-            groups = r.json() if isinstance(r.json(), list) else (
-                r.json().get("data", []) if isinstance(r.json(), dict) else []
-            )
-            result["groups"] = [
-                {"id": g.get("id", ""), "name": g.get("name") or g.get("id", "")}
-                for g in groups
-            ]
-    except Exception:
-        # Groups endpoint may be broken like /chats — silently ignore
-        pass
-
-    # If groups endpoint failed, try to extract group info from recent messages
-    if not result["groups"]:
-        try:
-            r = requests.get(
-                "{0}/api/sessions/{1}/messages?limit=100".format(base_url.rstrip("/"), session_id),
-                headers=headers, timeout=15,
-            )
-            if r.ok:
-                body = r.json()
-                msgs = body.get("messages", []) if isinstance(body, dict) else body
-                group_map = {}
-                for m in msgs:
-                    cid = m.get("chatId", "")
-                    if "@g.us" in cid and cid not in group_map:
-                        group_map[cid] = {
-                            "id": cid,
-                            "name": m.get("chatName") or m.get("author", "").split("@")[0] or cid,
-                        }
-                result["groups"] = list(group_map.values())
-        except Exception:
-            pass
+        frappe.log_error(title="OpenWA chats fetch failed", message=frappe.get_traceback())
 
     # Cache for 5 minutes (shorter for search results)
     expires = 60 if search else 300
