@@ -23,23 +23,18 @@ Cloudflare Rocket Loader to skip it.
 
 Why it survives backup/restore
 ------------------------------
-Detection keys off frappe.local.site (the directory name under
-sites/). No DB row, no Single DocType, no System Settings flag.
+Detection keys off frappe.conf.get("environment") (set in site_config.json).
+No DB row, no Single DocType, no System Settings flag.
 Nothing to overwrite on restore.
 
 Tweaking
 --------
-Edit PROD_SITES below to add / rename production sites. Anything not
-in that set gets the red banner.
+Set `environment: "production"` in site_config.json for prod sites.
+Any site without this (or with environment != "production") gets the red banner.
 """
 
 import frappe
 
-
-# Sites in this set are treated as PRODUCTION and show NO banner.
-PROD_SITES = {
-    "kreativ216",
-}
 
 # Base colour for the banner.
 COLOR = "#dc3545"
@@ -130,7 +125,8 @@ def update_website_context(context):
     except Exception:
         return context
 
-    if site in PROD_SITES:
+    # Production check: site_config.json -> environment: "production"
+    if frappe.conf.get("environment") == "production":
         return context
 
     banner = make_banner(site=site, label="TESTING", color=COLOR)

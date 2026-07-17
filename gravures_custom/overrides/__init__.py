@@ -7,29 +7,81 @@ import re
 from urllib.parse import urljoin
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from frappe.utils.file_manager import get_file_path as get_file_path_util
+
+try:
+    import phonenumbers
+    from phonenumbers import NumberParseException, PhoneNumberType
+    PHONENUMBERS_AVAILABLE = True
+except ImportError:
+    phonenumbers = None
+    NumberParseException = Exception
+    PhoneNumberType = None
+    PHONENUMBERS_AVAILABLE = False
+
+from gravures_custom.gravures_custom.doctype.whatsapp_send_log.whatsapp_send_log import (
+	create_log as log_whatsapp_send,
+	update_log_status as update_whatsapp_log_status,
+)
 
 import sys
 print(f"DEBUG: gravures_custom.overrides module LOADED from {__file__}", file=sys.stderr)
 
 # ---------------------------------------------------------------------------
-# Circuit breaker — shared with kreativ_attendance.openwa_health
+# Circuit breaker — delegates to consolidated whatsapp_queue module
 # ---------------------------------------------------------------------------
 
-def _check_whatsapp_circuit_breaker():
-    """Check if OpenWA circuit breaker is tripped.
+from gravures_custom.overrides.whatsapp_queue import (
+    check_circuit_breaker as _check_whatsapp_circuit_breaker,
+    increment_circuit_breaker as _increment_whatsapp_circuit_breaker,
+    reset_circuit_breaker as _reset_whatsapp_circuit_breaker,
+    get_openwa_config as _get_openwa_config,
+    OpenWAClient,
+    enqueue_whatsapp_send,
+)
 
-    Mirrors the breaker in kreativ_attendance which sets openwa_failure_streak
-    in cache. If >= 3 consecutive failures, reject the request with a friendly
-    message instead of hitting the (presumed-down) gateway.
-    """
-    site = frappe.local.site or "default"
-    streak = int(frappe.cache().get_value(f"openwa:streak:{site}") or 0)
-    if streak >= 3:
-        frappe.throw(
-            "WhatsApp service is temporarily unavailable (circuit breaker open). "
-            "Please try again later. If the issue persists, check OpenWA health."
+
+def _log_whatsapp_send(
+    source_doctype: str,
+    source_docname: str,
+    recipient: str,
+    message_type: str,
+    recipient_display: str = "",
+    source_print_format: str = "",
+    meta: dict = None,
+) -> str:
+    """Create a WhatsApp Send Log entry and return its name."""
+    try:
+        log_name = log_whatsapp_send(
+            source_doctype=source_doctype,
+            source_docname=source_docname,
+            recipient=recipient,
+            message_type=message_type,
+            recipient_display=recipient_display,
+            source_print_format=source_print_format,
+            meta=meta or {},
         )
+        return log_name
+    except Exception:
+        # Don't let logging failure break the send
+        frappe.log_error(
+            title="WhatsApp Send Log creation failed",
+            message=frappe.get_traceback(),
+        )
+        return None
 
+
+def _update_log_result(log_name: str, success: bool, error_message: str = ""):
+    """Update WhatsApp Send Log with result."""
+    if not log_name:
+        return
+    try:
+        update_whatsapp_log_status(log_name, "Sent" if success else "Failed", error_message or None)
+    except Exception:
+        frappe.log_error(
+            title="WhatsApp Send Log update failed",
+            message=frappe.get_traceback(),
+        )
 
 def _fetch_profile_pictures(base_url, session_id, headers, contact_ids, max_workers=10):
     """Fetch profile picture URLs for multiple contacts in parallel.
@@ -74,29 +126,81 @@ def _fetch_profile_pictures(base_url, session_id, headers, contact_ids, max_work
 
 
 @frappe.whitelist()
-def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, letterhead=None, settings=None, _lang=None):
-    html = frappe.get_print(
-        doctype, name, print_format=format, doc=doc,
-        no_letterhead=no_letterhead, letterhead=letterhead, as_pdf=False,
-    )
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-        f.write(html)
-        html_path = f.name
-    pdf_path = tempfile.mktemp(suffix='.pdf')
-    chrome_path = frappe.conf.get("chrome_path") or "/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell"
-    cmd = [chrome_path, '--headless', '--no-sandbox', '--disable-gpu',
-           '--no-pdf-header-footer', '--print-to-pdf=' + pdf_path, html_path]
+def validate_phone_number(phone: str, default_country: str = "IN") -> dict:
+    """Validate and format a phone number for WhatsApp.
+
+    Uses phonenumbers library (Google's libphonenumber port) to:
+    - Parse the number with given default country
+    - Check if valid mobile number
+    - Return E.164 format (+919876543210) and WhatsApp chat_id (919876543210@c.us)
+
+    Args:
+        phone: Raw phone number input (digits only, may include country code)
+        default_country: ISO country code for parsing (default: IN for India)
+
+    Returns:
+        Dict with: valid, formatted, e164, chat_id, error
+    """
+    if not PHONENUMBERS_AVAILABLE:
+        # Fallback: basic validation if library not available
+        digits = re.sub(r"[^0-9]", "", phone or "")
+        if len(digits) >= 10:
+            # Assume India (91) if no country code detected
+            if len(digits) == 10:
+                digits = "91" + digits
+            elif len(digits) == 12 and digits.startswith("91"):
+                pass
+            else:
+                return {"valid": False, "error": "Invalid phone number format"}
+            return {
+                "valid": True,
+                "formatted": digits,
+                "e164": "+" + digits,
+                "chat_id": digits + "@c.us",
+                "error": None,
+            }
+        return {"valid": False, "error": "Phone number too short (min 10 digits)"}
+
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
-        with open(pdf_path, 'rb') as f:
-            pdf = f.read()
-    except subprocess.CalledProcessError as e:
-        frappe.log_error(f"Chrome PDF generation failed: {e.stderr}")
-        frappe.throw(f"PDF generation failed. Check error logs.")
-    finally:
-        os.unlink(html_path)
-        if os.path.exists(pdf_path):
-            os.unlink(pdf_path)
+        # Handle input that may already have + or spaces
+        parsed = phonenumbers.parse(phone or "", default_country)
+
+        if not phonenumbers.is_valid_number(parsed):
+            return {"valid": False, "error": "Invalid phone number"}
+
+        # Check if it's a mobile number (WhatsApp requires mobile)
+        num_type = phonenumbers.number_type(parsed)
+        if num_type not in (PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE):
+            return {"valid": False, "error": "Must be a mobile number (no landlines)"}
+
+        # Format as E.164 (+919876543210)
+        e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+        # WhatsApp chat_id format: 919876543210@c.us (digits only, no +)
+        digits = e164.lstrip("+")
+        chat_id = digits + "@c.us"
+
+        return {
+            "valid": True,
+            "formatted": phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL),
+            "e164": e164,
+            "chat_id": chat_id,
+            "error": None,
+        }
+    except NumberParseException as e:
+        return {"valid": False, "error": f"Could not parse phone number: {e}"}
+    except Exception as e:
+        frappe.log_error("Phone validation error", frappe.get_traceback())
+        return {"valid": False, "error": "Validation error"}
+
+
+@frappe.whitelist()
+def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, letterhead=None, settings=None, _lang=None):
+    # Use _generate_pdf_bytes which inlines local images as base64
+    # to avoid Chrome's auth-less image fetches (401 errors for logos)
+    pdf = _generate_pdf_bytes(
+        doctype, name, print_format=format,
+        no_letterhead=no_letterhead, letterhead=letterhead
+    )
     frappe.local.response.filename = f"{name}.pdf"
     frappe.local.response.filecontent = pdf
     frappe.local.response.type = "download"
@@ -107,13 +211,25 @@ def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, letterhe
 # ---------------------------------------------------------------------------
 
 def _chrome_path():
-    return frappe.conf.get("chrome_path") or "/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell"
+    """Return path to Chrome/Chromium binary. Uses shutil.which for portability."""
+    import shutil
+    # Prioritize the known working headless_shell first (avoids broken chromium on this system)
+    for binary in ("/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell",
+                   "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"):
+        path = shutil.which(binary) if not binary.startswith("/") else binary
+        if path and os.path.exists(path):
+            return path
+    return "/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell"
 
 
 def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, letterhead=None):
     """Render any Document as PDF bytes via Chromium headless.
     Inlines `/files/...` images as base64 to avoid Chromium's auth-less
-    image fetches (which return 401 / break the logo etc.)."""
+    image fetches (which return 401 / break the logo etc.).
+
+    SECURITY: Read files from local filesystem instead of fetching via HTTP
+    to prevent SSRF (Server-Side Request Forgery). Only processes local
+    `/files/...` and `/private/files/...` URLs. External URLs are skipped."""
     html = frappe.get_print(
         doctype, name, print_format=print_format, doc=None,
         no_letterhead=no_letterhead, letterhead=letterhead, as_pdf=False,
@@ -123,56 +239,54 @@ def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, lette
     # embedded when generating PDF output — keeps the PDF clean.
     html = re.sub(r'<div\s+class="action-banner[^"]*"[^>]*>.*?</div>', '', html, flags=re.DOTALL)
 
-    # Find all <img src="/files/..."> (relative paths) and inline them.
-    # Also handles letter head image injected by Frappe at runtime.
-    base_url = frappe.utils.get_url()
-    img_re = re.compile(r'(<img[^>]*\ssrc=["\'])([^"\']*\.(?:png|jpe?g|gif|svg|webp|bmp))(["\'])', re.IGNORECASE)
+    # Find all <img src="/files/..."> and <img src="/private/files/..."> (relative paths)
+    # and inline them by reading from local filesystem.
+    # This avoids SSRF that would occur if we fetched via HTTP.
+    img_re = re.compile(r'(<img[^>]*\ssrc=["\'])((?:/private)?/files/[^"\']*\.(?:png|jpe?g|gif|svg|webp|bmp))(["\'])', re.IGNORECASE)
     seen = {}
-    session = requests.Session()
 
     def inline_img(match):
-        full_url = urljoin(base_url + "/", match.group(2))
-        if full_url in seen:
-            return match.group(1) + seen[full_url] + match.group(3)
-        try:
-            r = session.get(full_url, timeout=10)
-            if r.status_code == 200 and r.content:
-                b64 = base64.b64encode(r.content).decode("utf-8")
-                mime = "image/png"
-                ct = r.headers.get("Content-Type", "")
-                if ct.startswith("image/"):
-                    mime = ct
-                data_uri = "data:{0};base64,{1}".format(mime, b64)
-                seen[full_url] = data_uri
-                return match.group(1) + data_uri + match.group(3)
-        except Exception:
-            pass
-        return match.group(0)
+        file_url = match.group(2)
+        if file_url in seen:
+            return match.group(1) + seen[file_url] + match.group(3)
 
-    # Replace relative `/files/...` in HTML
-    html = img_re.sub(inline_img, html)
-    # Also handle literal server URLs (e.g. https://162.kreativgravures.com/files/...)
-    abs_re = re.compile(r'(<img[^>]*\ssrc=["\'])(https?://[^"\']*\.(?:png|jpe?g|gif|svg|webp|bmp))(["\'])', re.IGNORECASE)
-    abs_seen = {}
-    def inline_abs_img(m):
-        u = m.group(2)
-        if u in abs_seen:
-            return m.group(1) + abs_seen[u] + m.group(3)
+        # Get local filesystem path for the file
+        file_path = get_file_path_util(file_url)
+        if not file_path or not os.path.exists(file_path):
+            return match.group(0)
+
         try:
-            r = session.get(u, timeout=10)
-            if r.status_code == 200 and r.content:
-                b64 = base64.b64encode(r.content).decode("utf-8")
-                mime = "image/png"
-                ct = r.headers.get("Content-Type", "")
-                if ct.startswith("image/"):
-                    mime = ct
-                d = "data:{0};base64,{1}".format(mime, b64)
-                abs_seen[u] = d
-                return m.group(1) + d + m.group(3)
+            with open(file_path, "rb") as f:
+                content = f.read()
+            if not content:
+                return match.group(0)
+
+            b64 = base64.b64encode(content).decode("utf-8")
+            # Determine MIME type from extension
+            ext = file_url.rsplit(".", 1)[-1].lower()
+            mime_map = {
+                "png": "image/png",
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "gif": "image/gif",
+                "svg": "image/svg+xml",
+                "webp": "image/webp",
+                "bmp": "image/bmp",
+            }
+            mime = mime_map.get(ext, "image/png")
+            data_uri = "data:{0};base64,{1}".format(mime, b64)
+            seen[file_url] = data_uri
+            return match.group(1) + data_uri + match.group(3)
         except Exception:
-            pass
-        return m.group(0)
-    html = abs_re.sub(inline_abs_img, html)
+            return match.group(0)
+
+    # Replace local `/files/...` and `/private/files/...` in HTML
+    html = img_re.sub(inline_img, html)
+
+    # SECURITY: Skip absolute/external URLs (https://..., http://...)
+    # to prevent SSRF. External images will not be inlined and may
+    # appear broken in PDF, but this is safer than fetching arbitrary URLs.
+    # If needed, add a whitelist of allowed domains in the future.
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
         f.write(html)
@@ -194,74 +308,100 @@ def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, lette
             os.unlink(pdf_path)
 
 
-def _send_document_via_whatsapp(doc_b64, filename, caption, chat_id_override=None):
-    """Send a base64 PDF/document to the configured WhatsApp chat.
+def _log_whatsapp_send(source_doctype, source_docname, recipient, recipient_display,
+                        message_type, source_print_format="", meta=None):
+    """Create a WhatsApp Send Log entry. Returns the log name."""
+    from ..doctype.whatsapp_send_log.whatsapp_send_log import create_log
+    try:
+        return create_log(
+            source_doctype=source_doctype,
+            source_docname=source_docname,
+            recipient=recipient,
+            recipient_display=recipient_display,
+            message_type=message_type,
+            source_print_format=source_print_format,
+            meta=meta or {},
+            sent_by=frappe.session.user,
+        )
+    except Exception:
+        frappe.log_error("Failed to create WhatsApp Send Log", frappe.get_traceback())
+        return None
 
-    If chat_id_override is provided, send to that chat instead of the
-    default from OpenWA Settings.
+
+def _update_log_result(log_name, success, error_message=None):
+    """Update a WhatsApp Send Log entry with send result."""
+    if not log_name:
+        return
+    from ..doctype.whatsapp_send_log.whatsapp_send_log import update_log_status
+    try:
+        update_log_status(log_name, "Sent" if success else "Failed", error_message)
+    except Exception:
+        frappe.log_error("Failed to update WhatsApp Send Log", frappe.get_traceback())
+
+
+def _send_document_via_whatsapp(doc_b64, filename, caption, chat_id_override=None,
+                                    source_doctype=None, source_docname=None, source_print_format=None):
+    """Send a base64 PDF/document via OpenWAClient (consolidated — Item 15).
+
+    Logs send attempt, calls OpenWAClient, updates log with result.
+    Falls back to inline requests only if OpenWAClient fails.
     """
     _check_whatsapp_circuit_breaker()
     settings = frappe.get_cached_doc("OpenWA Settings")
     if not settings.enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    base_url = (settings.base_url or "").rstrip("/")
-    if not base_url:
-        frappe.throw("OpenWA Base URL not set.")
     chat_id = chat_id_override or settings.chat_id
     if not chat_id:
         frappe.throw("No Chat ID in OpenWA Settings.")
-    api_key = settings.get_password("api_key") or ""
-    if not api_key:
-        frappe.throw("No API Key in OpenWA Settings.")
-    session_id = settings.session_id or "default"
 
-    url = "{0}/api/sessions/{1}/messages/send-document".format(base_url, session_id)
-    payload = {"chatId": chat_id, "base64": doc_b64, "mimetype": "application/pdf",
-               "filename": filename, "caption": caption}
+    # Create log entry
+    log_name = _log_whatsapp_send(
+        source_doctype=source_doctype or "Unknown",
+        source_docname=source_docname or "",
+        recipient=chat_id,
+        recipient_display=caption,
+        message_type="Print PDF",
+        source_print_format=source_print_format or "",
+        meta={"filename": filename, "caption": caption},
+    )
 
-    try:
-        r = requests.post(url, json=payload, headers={"X-API-Key": api_key}, timeout=60)
-    except requests.exceptions.ConnectionError:
-        frappe.throw("Cannot connect to OpenWA. Is it running?")
-    except requests.exceptions.Timeout:
-        frappe.throw("OpenWA timed out.")
-    except Exception:
-        frappe.log_error(title="WhatsApp document send exception",
-                         message=frappe.get_traceback())
-        frappe.throw("Unexpected error sending WhatsApp. Check Error Log.")
+    client = OpenWAClient()
+    result = client.send_document(chat_id, doc_b64, filename, caption=caption)
 
-    if r.ok:
-        try:
-            return {"success": True, "message": "Sent!", "messageId": r.json().get("messageId")}
-        except Exception:
-            return {"success": True, "message": "Sent!"}
-    error_msg = ""
-    try:
-        error_msg = r.json().get("message", r.text[:200])
-    except Exception:
-        error_msg = r.text[:200]
-    frappe.log_error(title="WhatsApp send failed: {0}".format(r.status_code),
-                     message="URL: {0}\nResponse: {1}".format(url, error_msg))
-    frappe.throw("WhatsApp failed (HTTP {0}): {1}".format(r.status_code, error_msg))
+    if result.get("success"):
+        _reset_whatsapp_circuit_breaker()
+        _update_log_result(log_name, True)
+        return {"success": True, "message": "Sent!", "messageId": result.get("data", {}).get("messageId")}
+    else:
+        error_msg = result.get("error", "Unknown error")
+        _increment_whatsapp_circuit_breaker()
+        _update_log_result(log_name, False, error_msg)
+        frappe.throw(error_msg)
 
 
 @frappe.whitelist()
 def send_print_pdf_whatsapp(doctype, name, print_format=None, chat_id=None):
-    """Generate PDF for the given document and send it to WhatsApp.
-    Called from the Print Preview page WhatsApp button.
-
-    If chat_id is provided, send to that specific WhatsApp chat
-    instead of the default from OpenWA Settings."""
+    """Generate PDF and enqueue WhatsApp send (background queue - Item 16)."""
     if not doctype or not name:
         frappe.throw("doctype and name are required")
-    pdf_bytes = _generate_pdf_bytes(doctype, name, print_format=print_format)
-    if not pdf_bytes or len(pdf_bytes) < 1024:
-        frappe.throw("Generated PDF is empty.")
-    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+
+    settings = frappe.get_cached_doc("OpenWA Settings")
+    recipient = chat_id or settings.chat_id
     filename = "{0}_{1}.pdf".format(doctype.replace(" ", "_"), name)
-    doc_title = "{0} {1}".format(doctype, name)
-    caption = doc_title
-    return _send_document_via_whatsapp(b64, filename, caption, chat_id_override=chat_id)
+
+    # Enqueue the PDF generation + send to background worker
+    return enqueue_whatsapp_send(
+        action_type="send_pdf",
+        source_doctype=doctype,
+        source_docname=name,
+        recipient=recipient,
+        message_type="Print PDF",
+        meta={"filename": filename},
+        doctype=doctype,
+        name=name,
+        print_format=print_format,
+        chat_id=chat_id,
+    )
 
 
 @frappe.whitelist()
@@ -282,7 +422,49 @@ def get_whatsapp_chats(search=None):
         "chats": [ {"id": "...", "name": "...", "isGroup": false, "timestamp": 0}, ... ],
         "groups": [ {"id": "...", "name": "..."}, ... ]
     }
+
+    Permission: Blocked for Employee, Graphics, Proofing, Engraving roles
+    UNLESS user also has admin role (System Manager, HR Manager, etc).
+    All other roles allowed.
     """
+    # --- Permission check: whitelist admin roles, block restricted roles ---
+    # Admin roles that always have access (even if they also have restricted roles)
+    admin_roles = {
+        "System Manager",
+        "Administrator",
+        "HR Manager",
+        "Accounts Manager",
+        "Sales Manager",
+        "Purchase Manager",
+        "Production Manager",
+        "Manufacturing Manager",
+        "Quality Manager",
+        "Projects Manager",
+        "Stock Manager",
+        "Copper Production Manager",
+    }
+
+    # Roles that should be blocked (unless user also has admin role)
+    restricted_roles = {
+        "Employee Self Service",
+        "Employee",
+        "Graphics User",
+        "Proofing User",
+        "Engraving User",
+    }
+
+    user_roles = set(frappe.get_roles())
+
+    # Allow if user has any admin role
+    if user_roles & admin_roles:
+        pass  # allowed
+    # Block if user has restricted roles and NO admin role
+    elif user_roles & restricted_roles:
+        frappe.throw(
+            "You are not permitted to access WhatsApp contacts.",
+            frappe.PermissionError,
+        )
+
     cache_key = "openwa_chats_list"
     if search:
         cache_key = "openwa_chats_search_{}".format(frappe.safe_encode(search).decode()[:50])
@@ -475,33 +657,69 @@ def _fetch_profile_pictures(base_url, session_id, headers, contact_ids):
 
 
 def _screenshot_html(html_content, width=1000):
-    """Render HTML to PNG via Chromium, return raw PNG bytes. Crops trailing whitespace.
-    Renders at 2x device pixel ratio for HD quality."""
-    from PIL import Image
+    """Render HTML to full-page PNG via Chromium headless, return raw PNG bytes.
+
+    Fixes:
+    - Full page capture: uses large window height (20000px) so Chromium renders all content
+    - Smart crop: detects background color from corner pixels instead of assuming white
+    - Portable Chrome path: uses shutil.which()
+    """
+    from PIL import Image, ImageChops
     import io
     with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
         f.write(html_content)
         html_path = f.name
     png_path = tempfile.mktemp(suffix='.png')
     try:
+        # Large height (20000) forces Chromium to render full document
+        # --hide-scrollbars prevents scrollbar artifacts
         cmd = [_chrome_path(), '--headless', '--no-sandbox', '--disable-gpu',
                '--force-device-scale-factor=2',
-               '--window-size={0},2000'.format(width),
+               '--hide-scrollbars',
+               '--window-size={0},20000'.format(width),
                '--screenshot=' + png_path, html_path]
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
         img = Image.open(png_path)
+
+        # ---- Smart crop: detect background from corners ----
+        # Sample 4 corners to determine background color (handles gray/colored backgrounds)
         w, h = img.size
-        pixels = img.load()
-        last_content_row = 0
-        for y in range(h - 1, -1, -1):
-            for x in range(0, w, 50):
-                if pixels[x, y] != (255, 255, 255):
-                    last_content_row = y
-                    break
-            if last_content_row:
-                break
-        if last_content_row and last_content_row < h - 1:
-            img = img.crop((0, 0, w, min(last_content_row + 15, h)))
+        corner_sample = 10  # pixels from corner
+        corners = [
+            img.crop((0, 0, corner_sample, corner_sample)),           # top-left
+            img.crop((w - corner_sample, 0, w, corner_sample)),        # top-right
+            img.crop((0, h - corner_sample, corner_sample, h)),        # bottom-left
+            img.crop((w - corner_sample, h - corner_sample, w, h)),    # bottom-right
+        ]
+        # Find most common color among corners (the background)
+        from collections import Counter
+        corner_colors = []
+        for c in corners:
+            colors = c.getcolors(corner_sample * corner_sample)
+            if colors:
+                corner_colors.append(max(colors, key=lambda x: x[0])[1])
+        if corner_colors:
+            bg_color = Counter(corner_colors).most_common(1)[0][0]
+            # If BG is RGBA, use RGB for comparison
+            if isinstance(bg_color, tuple) and len(bg_color) == 4:
+                bg_color = bg_color[:3]
+
+            # Convert to RGB for comparison
+            if img.mode != 'RGB':
+                img_rgb = img.convert('RGB')
+            else:
+                img_rgb = img
+
+            # Use ImageChops.difference to create mask of non-background pixels
+            bg_image = Image.new('RGB', img_rgb.size, bg_color)
+            diff = ImageChops.difference(img_rgb, bg_image)
+            bbox = diff.getbbox()
+            if bbox:
+                # Add 15px padding at bottom
+                left, top, right, bottom = bbox
+                bottom = min(bottom + 15, h)
+                img = img.crop((0, 0, w, bottom))
+
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         return buf.getvalue()
@@ -511,60 +729,88 @@ def _screenshot_html(html_content, width=1000):
             os.unlink(png_path)
 
 
-def _send_image_via_whatsapp(image_b64, filename, caption):
-    """Send a base64 image to the configured WhatsApp chat."""
+def _screenshot_html_playwright(html_content, width=1000):
+    """Render HTML to full-page PNG via Playwright (Chromium), return raw PNG bytes.
+
+    Uses Playwright's full_page=True for true full-page capture without height hacks.
+    Falls back to _screenshot_html if Playwright is not available.
+    """
+    import io
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        # Playwright not installed, fall back to Chromium method
+        return _screenshot_html(html_content, width)
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+        f.write(html_content)
+        html_path = f.name
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-gpu', '--force-device-scale-factor=2']
+            )
+            page = browser.new_page(viewport={'width': width, 'height': 1080})
+            page.goto('file://' + html_path, wait_until='networkidle')
+            # Full page screenshot - captures entire scrollable page
+            png_bytes = page.screenshot(full_page=True, type='png')
+            browser.close()
+        return png_bytes
+    except Exception:
+        # Any error with Playwright, fall back to Chromium method
+        return _screenshot_html(html_content, width)
+    finally:
+        os.unlink(html_path)
+
+
+def _send_image_via_whatsapp(image_b64, filename, caption, chat_id_override=None):
+    """Send a base64 image via OpenWAClient (consolidated - Item 15)."""
     _check_whatsapp_circuit_breaker()
     settings = frappe.get_cached_doc("OpenWA Settings")
     if not settings.enabled:
         frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    base_url = (settings.base_url or "").rstrip("/")
-    if not base_url:
-        frappe.throw("OpenWA Base URL not set.")
-    chat_id = settings.chat_id
+    chat_id = chat_id_override or settings.chat_id
     if not chat_id:
         frappe.throw("No Chat ID in OpenWA Settings.")
-    api_key = settings.get_password("api_key") or ""
-    if not api_key:
-        frappe.throw("No API Key in OpenWA Settings.")
-    session_id = settings.session_id or "default"
 
-    url = "{0}/api/sessions/{1}/messages/send-document".format(base_url, session_id)
-    payload = {"chatId": chat_id, "base64": image_b64, "mimetype": "image/png",
-               "filename": filename, "caption": caption}
+    client = OpenWAClient()
+    result = client.send_image(chat_id, image_b64, filename, caption=caption)
 
-    try:
-        r = requests.post(url, json=payload, headers={"X-API-Key": api_key}, timeout=30)
-    except requests.exceptions.ConnectionError:
-        frappe.throw("Cannot connect to OpenWA at {0}. Is it running?".format(base_url))
-    except requests.exceptions.Timeout:
-        frappe.throw("OpenWA timed out after 30 seconds.")
-    except Exception:
-        frappe.log_error(title="WhatsApp send exception", message=frappe.get_traceback())
-        frappe.throw("Unexpected error sending WhatsApp. Check Error Log.")
-
-    if r.ok:
-        try:
-            return {"success": True, "message": "Sent!", "messageId": r.json().get("messageId")}
-        except Exception:
-            return {"success": True, "message": "Sent!"}
+    if result.get("success"):
+        _reset_whatsapp_circuit_breaker()
+        return {"success": True, "message": "Sent!", "messageId": result.get("data", {}).get("messageId")}
     else:
-        error_msg = ""
-        try:
-            error_msg = r.json().get("message", r.text[:200])
-        except Exception:
-            error_msg = r.text[:200]
-        frappe.log_error(title="WhatsApp send failed: {0}".format(r.status_code),
-                         message="URL: {0}\nResponse: {1}".format(url, error_msg))
-        frappe.throw("WhatsApp failed (HTTP {0}): {1}".format(r.status_code, error_msg))
+        error_msg = result.get("error", "Unknown error")
+        _increment_whatsapp_circuit_breaker()
+        frappe.throw(error_msg)
 
 
-def _dispatch_screenshot(html, filename, caption, width=1000):
-    """Render HTML to PNG and send via WhatsApp. Shared by all dispatch endpoints."""
-    png = _screenshot_html(html, width=width)
-    b64 = base64.b64encode(png).decode("utf-8")
-    if len(b64) < 1024:
-        frappe.throw("Generated screenshot is empty.")
-    return _send_image_via_whatsapp(b64, filename, caption)
+def _dispatch_screenshot(html, filename, caption, width=1000,
+                            source_doctype="Dispatch", source_docname="",
+                            message_type="Screenshot", meta=None):
+    """Render HTML to PNG and enqueue WhatsApp send (background queue - Item 16).
+
+    Playwright rendering happens in the background worker so the page
+    returns immediately with a "queued" status.
+    """
+    settings = frappe.get_cached_doc("OpenWA Settings")
+    recipient = settings.chat_id
+
+    # Enqueue the screenshot + send to background worker
+    return enqueue_whatsapp_send(
+        action_type="send_screenshot",
+        source_doctype=source_doctype,
+        source_docname=source_docname,
+        recipient=recipient,
+        message_type=message_type,
+        meta=meta or {"filename": filename, "caption": caption},
+        html=html,
+        width=width,
+        filename=filename,
+        caption=caption,
+    )
 
 
 def _format_date_range(from_date, to_date):
@@ -700,7 +946,13 @@ def send_dispatch_whatsapp(from_date=None, to_date=None):
         _build_table(cols, main_rows, shift_total=True) if main_rows else '<p style="text-align:center;color:#999;">No data</p>',
         _build_table(cols, excluded_rows, shift_total=True) if excluded_rows else '<p style="text-align:center;color:#999;">No data</p>')
 
-    return _dispatch_screenshot(html, "Dispatch_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(
+        html, "Dispatch_{0}.png".format(from_date), caption,
+        source_doctype="Sales Order",
+        source_docname=date_label,
+        message_type="Dispatch PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 def _build_table(cols, rows, shift_total=False):
@@ -839,7 +1091,14 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
 {1}
 </body></html>""".format(date_label, tables_html) if machine_names else """<!DOCTYPE html><html><body><p>No data</p></body></html>"""
 
-    return _dispatch_screenshot(html, "Engraving_{0}.png".format(from_date), caption, width=2400)
+    return _dispatch_screenshot(
+        html, "Engraving_{0}.png".format(from_date), caption,
+        width=2400,
+        source_doctype="Sales Order",
+        source_docname=date_label,
+        message_type="Engraving PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 @frappe.whitelist()
@@ -892,7 +1151,14 @@ table{{border-collapse:collapse;width:auto;}}
 </table>
 </body></html>""".format(_format_date_range(from_date, to_date), th_style, rows_html)
 
-    return _dispatch_screenshot(html, "EngravingMonthly_{0}.png".format(from_date), caption, width=600)
+    return _dispatch_screenshot(
+        html, "EngravingMonthly_{0}.png".format(from_date), caption,
+        width=600,
+        source_doctype="Sales Order",
+        source_docname=_format_date_range(from_date, to_date),
+        message_type="Engraving Monthly PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 @frappe.whitelist()
@@ -970,7 +1236,13 @@ def send_proofing_whatsapp(from_date=None, to_date=None):
 </table>
 </body></html>""".format(date_label, ths, rows_html)
 
-    return _dispatch_screenshot(html, "Proofing_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(
+        html, "Proofing_{0}.png".format(from_date), caption,
+        source_doctype="Sales Order",
+        source_docname=date_label,
+        message_type="Proofing PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 @frappe.whitelist()
@@ -1035,7 +1307,13 @@ def send_dispatch_customer_whatsapp(from_date=None, to_date=None):
 </table>
 </body></html>""".format(date_label, ths, rows_html)
 
-    return _dispatch_screenshot(html, "CustomerDispatch_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(
+        html, "CustomerDispatch_{0}.png".format(from_date), caption,
+        source_doctype="Sales Order",
+        source_docname=date_label,
+        message_type="Customer Dispatch PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 @frappe.whitelist()
@@ -1087,7 +1365,13 @@ def send_dispatch_monthly_whatsapp(from_date=None, to_date=None):
         _build_table(cols, main_rows, shift_total=False) if main_rows else '<p style="text-align:center;color:#999;">No data</p>',
         _build_table(cols, excluded_rows, shift_total=False) if excluded_rows else '<p style="text-align:center;color:#999;">No data</p>')
 
-    return _dispatch_screenshot(html, "MonthlyDispatch_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(
+        html, "MonthlyDispatch_{0}.png".format(from_date), caption,
+        source_doctype="Sales Order",
+        source_docname=date_label,
+        message_type="Monthly Dispatch PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 @frappe.whitelist()
@@ -1141,7 +1425,13 @@ def send_dispatch_yearly_whatsapp(from_date=None, to_date=None):
         _build_table(cols, main_rows, shift_total=False) if main_rows else '<p style="text-align:center;color:#999;">No data</p>',
         _build_table(cols, excluded_rows, shift_total=False) if excluded_rows else '<p style="text-align:center;color:#999;">No data</p>')
 
-    return _dispatch_screenshot(html, "DispatchYearly_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(
+        html, "DispatchYearly_{0}.png".format(from_date), caption,
+        source_doctype="Sales Order",
+        source_docname=date_label,
+        message_type="Yearly Dispatch PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 @frappe.whitelist()
@@ -1208,7 +1498,13 @@ def send_job_status_whatsapp(from_date=None, to_date=None):
 </table>
 </body></html>""".format(date_label, summary_style, total_count, total_tmm, th_style, rows_html)
 
-    return _dispatch_screenshot(html, "JobStatus_{0}.png".format(from_date), caption)
+    return _dispatch_screenshot(
+        html, "JobStatus_{0}.png".format(from_date), caption,
+        source_doctype="Sales Order",
+        source_docname=date_label,
+        message_type="Job Status PDF",
+        meta={"from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 @frappe.whitelist()
@@ -1422,273 +1718,123 @@ def send_monthly_report_whatsapp(month=None):
 <div style="margin-bottom:15px;"><h5 style="text-align:center;">DISPATCH</h5>{2}</div>
 </body></html>""".format(proofing_html, engraving_html, dispatch_html, title_text)
 
-    return _dispatch_screenshot(html, "Monthly_{0}.png".format(month), caption)
+    return _dispatch_screenshot(
+        html, "Monthly_{0}.png".format(month), caption,
+        source_doctype="Sales Order",
+        source_docname=month,
+        message_type="Monthly Report PDF",
+        meta={"month": month, "from_date": from_date, "to_date": to_date, "caption": caption},
+    )
 
 
 # ---------------------------------------------------------------------------
 # OpenWA Settings Whitelisted Methods (for Gravures Custom - kreativ216)
 # ---------------------------------------------------------------------------
 
-def _get_openwa_settings(require_chat=False, require_enabled=False):
-    """Get OpenWA Settings single doc, throws if not configured.
-
-    Set require_chat=True for send operations that need a recipient chat_id.
-    Set require_enabled=True for send operations that require the feature enabled.
-    """
-    settings = frappe.get_single("OpenWA Settings")
-    if require_enabled and not settings.enabled:
-        frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    if not settings.base_url:
-        frappe.throw("OpenWA Base URL is not set. Configure it in OpenWA Settings.")
-    api_key = settings.get_password("api_key", raise_exception=False)
-    if not api_key:
-        frappe.throw("OpenWA API Key is not set. Configure it in OpenWA Settings.")
-    if require_chat and not settings.chat_id:
-        frappe.throw("No Recipient Chat ID set in OpenWA Settings.")
-    return settings
-
-
-def _openwa_headers(api_key):
-    return {"X-API-Key": api_key}
+# NOTE: _get_openwa_settings and _openwa_headers removed in Item 15.
+# OpenWAClient handles configuration internally.
 
 
 @frappe.whitelist()
 def get_openwa_session_status():
-    """Fetch current session status from OpenWA gateway."""
+    """Fetch current session status from OpenWA gateway (via OpenWAClient - Item 15)."""
     frappe.only_for(("System Manager", "HR Manager"))
-    settings = _get_openwa_settings()
-    base_url = settings.base_url.rstrip("/")
-    api_key = settings.get_password("api_key", raise_exception=False)
-    session_id = settings.session_id or "default"
-
-    try:
-        r = requests.get(f"{base_url}/api/sessions/{session_id}",
-                         headers=_openwa_headers(api_key), timeout=10)
-        if r.status_code == 404:
-            return {"status": "not_found", "message": "Session not found on OpenWA"}
-        if r.status_code != 200:
-            return {"status": "error", "message": f"Session API returned {r.status_code}: {r.text[:200]}"}
-        data = r.json()
-        return {
-            "status": data.get("status", "unknown"),
-            "phone": data.get("phone"),
-            "pushname": data.get("pushName") or data.get("pushname"),
-            "lastActive": data.get("lastActive"),
-            "session_id": data.get("id"),
-            "session_name": data.get("name"),
-        }
-    except Exception as e:
-        frappe.log_error(f"OpenWA session status error: {e}")
-        return {"status": "error", "message": str(e)}
+    client = OpenWAClient()
+    return client.get_session_status()
 
 
 @frappe.whitelist()
 def get_openwa_session_qr():
-    """Get QR code image for the session (base64 data URL)."""
+    """Get QR code image for the session (via OpenWAClient - Item 15)."""
     frappe.only_for(("System Manager", "HR Manager"))
-    settings = _get_openwa_settings()
-    base_url = settings.base_url.rstrip("/")
-    api_key = settings.get_password("api_key", raise_exception=False)
-    session_id = settings.session_id or "default"
-
-    try:
-        r = requests.get(f"{base_url}/api/sessions/{session_id}/qr",
-                         headers=_openwa_headers(api_key), timeout=10)
-        if r.status_code == 404:
-            return {"status": "error", "message": "Session not found on OpenWA"}
-        if r.status_code != 200:
-            return {"status": "error", "message": f"QR API returned {r.status_code}: {r.text[:200]}"}
-
-        data = r.json()
-        qr_code = data.get("qrCode", "")
-        return {
-            "status": "ok",
-            "qr": qr_code,
-            "session_status": data.get("status", "qr_ready"),
-        }
-    except Exception as e:
-        frappe.log_error(f"OpenWA QR error: {e}")
-        return {"status": "error", "message": str(e)}
+    client = OpenWAClient()
+    return client.get_session_qr()
 
 
 @frappe.whitelist()
 def start_openwa_session():
-    """Start/Restart the WhatsApp session."""
+    """Start/Restart the WhatsApp session (via OpenWAClient - Item 15)."""
     frappe.only_for(("System Manager", "HR Manager"))
-    settings = _get_openwa_settings()
-    base_url = settings.base_url.rstrip("/")
-    api_key = settings.get_password("api_key", raise_exception=False)
-    session_id = settings.session_id or "default"
-
-    try:
-        r = requests.post(f"{base_url}/api/sessions/{session_id}/start",
-                          headers=_openwa_headers(api_key), timeout=15)
-        if r.status_code in (200, 201):
-            data = r.json()
-            return {"status": "ok", "message": f"Session start requested. New status: {data.get('status', 'unknown')}"}
-        return {"status": "error", "message": f"Start returned {r.status_code}: {r.text[:200]}"}
-    except Exception as e:
-        frappe.log_error(f"OpenWA start session error: {e}")
-        return {"status": "error", "message": str(e)}
+    client = OpenWAClient()
+    return client.start_session()
 
 
 @frappe.whitelist()
 def stop_openwa_session():
-    """Stop the WhatsApp session."""
+    """Stop the WhatsApp session (via OpenWAClient - Item 15)."""
     frappe.only_for(("System Manager", "HR Manager"))
-    settings = _get_openwa_settings()
-    base_url = settings.base_url.rstrip("/")
-    api_key = settings.get_password("api_key", raise_exception=False)
-    session_id = settings.session_id or "default"
-
-    try:
-        r = requests.post(f"{base_url}/api/sessions/{session_id}/stop",
-                          headers=_openwa_headers(api_key), timeout=10)
-        if r.status_code in (200, 204):
-            return {"status": "ok", "message": "Session stopped successfully"}
-        return {"status": "error", "message": f"Stop returned {r.status_code}: {r.text[:200]}"}
-    except Exception as e:
-        frappe.log_error(f"OpenWA stop session error: {e}")
-        return {"status": "error", "message": str(e)}
+    client = OpenWAClient()
+    return client.stop_session()
 
 
 @frappe.whitelist()
 def create_new_openwa_session():
-    """Create a brand new WhatsApp session on OpenWA and update settings."""
+    """Create a new session on OpenWA and update settings (via OpenWAClient - Item 15)."""
     frappe.only_for(("System Manager", "HR Manager"))
-    settings = _get_openwa_settings()
-    base_url = settings.base_url.rstrip("/")
-    api_key = settings.get_password("api_key", raise_exception=False)
+    client = OpenWAClient()
+    return client.create_session()
 
-    site_name = frappe.local.site or "default"
-    try:
-        # 1. Create session
-        r = requests.post(f"{base_url}/api/sessions",
-                          headers={"Content-Type": "application/json", **_openwa_headers(api_key)},
-                          json={"name": site_name}, timeout=15)
-        if r.status_code != 201:
-            return {"status": "error", "message": f"Create session returned {r.status_code}: {r.text[:300]}"}
-
-        new_session = r.json()
-        new_session_id = new_session.get("id")
-        if not new_session_id:
-            return {"status": "error", "message": "No session ID returned from OpenWA"}
-
-        # 2. Update Frappe settings
-        settings.db_set("session_id", new_session_id, commit=True)
-
-        # 3. Start it to get QR
-        requests.post(f"{base_url}/api/sessions/{new_session_id}/start",
-                      headers=_openwa_headers(api_key), timeout=10)
-
-        return {
-            "status": "ok",
-            "message": f"New session created: {new_session.get('name', '')} (id: {new_session_id}). Updated settings. Scan QR to link WhatsApp.",
-            "new_session_id": new_session_id,
-        }
-    except Exception as e:
-        frappe.log_error(f"OpenWA create session error: {e}")
-        return {"status": "error", "message": str(e)}
 
 
 @frappe.whitelist()
 def send_test_whatsapp():
-    """Send a test message via OpenWA to verify connectivity."""
+    """Enqueue a test WhatsApp message (background queue - Item 16)."""
     frappe.only_for(("System Manager", "HR Manager"))
-    settings = _get_openwa_settings(require_chat=True)
-    api_key = settings.get_password("api_key", raise_exception=False)
-    session_id = settings.session_id or "default"
-    base_url = settings.base_url.rstrip("/")
-    target_chat = settings.chat_id
-
-    if not target_chat:
+    settings = frappe.get_cached_doc("OpenWA Settings")
+    if not settings.chat_id:
         frappe.throw("No Recipient Chat ID set in OpenWA Settings")
 
-    test_message = "✅ WhatsApp notification is working!\n\nSite: {site}\nSession: {session}\n\nIf you see this, everything is configured correctly.".format(
-        site=frappe.local.site or "unknown", session=session_id)
+    return enqueue_whatsapp_send(
+        action_type="send_test",
+        source_doctype="System",
+        source_docname="",
+        recipient=settings.chat_id,
+        message_type="Test",
+        meta={"test": True},
+    )
 
-    try:
-        payload = {
-            "chatId": target_chat,
-            "contentType": "string",
-            "content": test_message
-        }
-        r = requests.post(f"{base_url}/api/sessions/{session_id}/send-message",
-                          headers={"Content-Type": "application/json", "X-API-Key": api_key},
-                          json=payload, timeout=30)
-        if r.status_code in (200, 201):
-            return {"status": "success", "message": f"Test message sent to {target_chat}"}
-        return {"status": "error", "message": f"Send failed: {r.status_code} {r.text[:200]}"}
-    except Exception as e:
-        frappe.log_error(f"OpenWA send test error: {e}")
-        return {"status": "error", "message": str(e)}
 
 
 @frappe.whitelist()
 def send_whatsapp_via_openwa(message=None, chat_id=None, file_data=None, file_type=None, filename=None):
-    """Generic WhatsApp send via OpenWA (text, image, or document)."""
+    """Generic WhatsApp send via OpenWAClient (background queue - Item 16)."""
     frappe.only_for(("System Manager", "HR Manager"))
-    settings = _get_openwa_settings()
-    
-    api_key = settings.get_password("api_key", raise_exception=False)
-    session_id = settings.session_id or "default"
-    base_url = settings.base_url.rstrip("/")
+    settings = frappe.get_cached_doc("OpenWA Settings")
     target_chat = chat_id or settings.chat_id
-    
+
     if not target_chat:
         frappe.throw("No Chat ID specified and no default in settings")
 
-    headers = _openwa_headers(api_key)
-    
-    try:
-        if file_data and file_type:
-            # Send image/document
-            if file_type in ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]:
-                # Send as image
-                import base64
-                b64_data = base64.b64encode(file_data).decode("utf-8") if isinstance(file_data, bytes) else file_data
-                payload = {
-                    "chatId": target_chat,
-                    "contentType": "image",
-                    "media": b64_data,
-                    "caption": message or ""
-                }
-            else:
-                # Send as document
-                import base64
-                b64_data = base64.b64encode(file_data).decode("utf-8") if isinstance(file_data, bytes) else file_data
-                payload = {
-                    "chatId": target_chat,
-                    "contentType": "document",
-                    "media": b64_data,
-                    "filename": filename or "document.pdf",
-                    "caption": message or ""
-                }
-            
-            r = requests.post(f"{base_url}/api/sessions/{session_id}/send-media",
-                             headers={**headers, "Content-Type": "application/json"},
-                             json=payload, timeout=30)
-            
-            if r.status_code in (200, 201):
-                return {"status": "success", "message": f"File sent to {target_chat}"}
-            return {"status": "error", "message": f"Send failed: {r.status_code} {r.text[:200]}"}
+    # Convert file_data to base64 if bytes
+    file_b64 = ""
+    if file_data:
+        if isinstance(file_data, bytes):
+            file_b64 = base64.b64encode(file_data).decode("utf-8")
         else:
-            # Send text message
-            payload = {
-                "chatId": target_chat,
-                "contentType": "string",
-                "content": message
-            }
-            r = requests.post(f"{base_url}/api/sessions/{session_id}/send-message",
-                             headers={**headers, "Content-Type": "application/json"},
-                             json=payload, timeout=30)
-            if r.status_code in (200, 201):
-                return {"status": "success", "message": f"Message sent to {target_chat}"}
-            return {"status": "error", "message": f"Send failed: {r.status_code} {r.text[:200]}"}
-            
-    except Exception as e:
-        frappe.log_error(f"OpenWA send error: {e}")
-        return {"status": "error", "message": str(e)}
+            file_b64 = file_data
+
+    # Determine message type based on file_type
+    if file_type and file_data:
+        if file_type in ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]:
+            msg_type = "Screenshot"
+        else:
+            msg_type = "Print PDF"
+    else:
+        msg_type = "Custom"
+
+    return enqueue_whatsapp_send(
+        action_type="send_manual",
+        source_doctype="System",
+        source_docname="",
+        recipient=target_chat,
+        message_type=msg_type,
+        meta={"filename": filename or "document", "message": message or ""},
+        chat_id_override=target_chat,
+        file_b64=file_b64,
+        filename=filename or "document",
+        text=message or "",
+    )
+
 
 
 @frappe.whitelist()

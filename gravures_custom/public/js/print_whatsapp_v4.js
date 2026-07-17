@@ -46,6 +46,9 @@
                 d.hide();
             },
         });
+        // Store context in dialog for filter/search to use - BEFORE d.show()
+        d._wa_context = { doctype: doctype, name: name, print_format: print_format, _lang: _lang };
+
         d.show();
 
         // Style
@@ -162,9 +165,48 @@
                     $input.focus();
                     return;
                 }
-                var chatId = clean + "@c.us";
-                d.hide();
-                sendWithSelectedChat(doctype, name, print_format, _lang, chatId, clean);
+
+                $btn.prop("disabled", true).html("Validating...");
+
+                // Server-side validation via phonenumbers library
+                frappe.call({
+                    method: "gravures_custom.overrides.validate_phone_number",
+                    args: { phone: clean },
+                    callback: function (r) {
+                        $btn.prop("disabled", false).html("Send");
+                        if (!r.message || !r.message.valid) {
+                            frappe.msgprint({
+                                title: "Invalid Phone Number",
+                                message: r.message?.error || "Could not validate phone number",
+                                indicator: "red"
+                            });
+                            $input.focus();
+                            return;
+                        }
+
+                        var result = r.message;
+                        var formatted = result.formatted || result.e164 || clean;
+
+                        // Confirm before sending
+                        frappe.confirm(
+                            "Send PDF to <b>" + frappe.utils.escape_html(formatted) + "</b> via WhatsApp?",
+                            function () {
+                                d.hide();
+                                var ctx = d._wa_context || {};
+                                sendWithSelectedChat(ctx.doctype, ctx.name, ctx.print_format, ctx._lang, result.chat_id, formatted);
+                            },
+                            function () {
+                                // User cancelled - re-focus input
+                                $input.focus();
+                            }
+                        );
+                    },
+                    error: function () {
+                        $btn.prop("disabled", false).html("Send");
+                        frappe.msgprint("Validation failed. Please try again.");
+                        $input.focus();
+                    }
+                });
             }
 
             $btn.on("click", doSend);
@@ -203,7 +245,8 @@
                     return;
                 }
                 d._picker_data = r.message;
-                renderPickerList(d, "", doctype, name, print_format, _lang);
+                var ctx = d._wa_context || {};
+                renderPickerList(d, "", ctx.doctype, ctx.name, ctx.print_format, ctx._lang);
             },
             error: function () {
                 d.fields_dict.picker_html.$wrapper.html(
@@ -345,7 +388,8 @@
        Helpers
     ----------------------------------------------------------- */
     function filterPickerList(d) {
-        renderPickerList(d, d.fields_dict.search_input.get_value() || "");
+        var ctx = d._wa_context || {};
+        renderPickerList(d, d.fields_dict.search_input.get_value() || "", ctx.doctype, ctx.name, ctx.print_format, ctx._lang);
     }
 
     function searchContactsServerSide(d) {
@@ -368,7 +412,8 @@
                     return;
                 }
                 d._picker_data = r.message;
-                renderPickerList(d, query);
+                var ctx = d._wa_context || {};
+                renderPickerList(d, query, ctx.doctype, ctx.name, ctx.print_format, ctx._lang);
             },
             error: function () {
                 $picker.html('<div style="text-align:center;padding:30px;color:#e74c3c;">Error searching contacts.</div>');
@@ -388,10 +433,11 @@
     ----------------------------------------------------------- */
     function sendWithSelectedChat(doctype, name, print_format, _lang, chatId, chatName) {
         // Confirm before sending
+        var safeChatName = frappe.utils.escape_html(chatName);
         frappe.confirm(
-            "Send PDF to <b>" + frappe.utils.escape_html(chatName) + "</b> via WhatsApp?",
+            "Send PDF to <b>" + safeChatName + "</b> via WhatsApp?",
             function () {
-                frappe.show_alert({ message: "Sending PDF to " + chatName + "...", indicator: "blue" });
+                frappe.show_alert({ message: "Sending PDF to " + safeChatName + "...", indicator: "blue" });
 
                 frappe.call({
                     method: "gravures_custom.overrides.send_print_pdf_whatsapp",
@@ -403,7 +449,7 @@
                     },
                     callback: function (r) {
                         if (r.message && r.message.success) {
-                            frappe.show_alert({ message: "Sent PDF to " + chatName + "!", indicator: "green" });
+                            frappe.show_alert({ message: "Sent PDF to " + safeChatName + "!", indicator: "green" });
                         } else if (r._server_messages) {
                             frappe.msgprint(r._server_messages.join("<br>"));
                         } else {

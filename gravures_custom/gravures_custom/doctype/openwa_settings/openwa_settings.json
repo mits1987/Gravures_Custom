@@ -1,173 +1,122 @@
 {
- "actions": [],
- "creation": "2026-07-07 11:47:14.710429",
- "doctype": "DocType",
- "engine": "InnoDB",
- "field_order": [
-  "enabled",
-  "base_url",
-  "api_key",
-  "column_break_1",
-  "session_id",
-  "chat_id",
-  "notify_on",
-  "section_break_session",
-  "session_status",
-  "session_qr",
-  "session_phone",
-  "session_pushname",
-  "salary_section",
-  "send_salary_slips",
-  "salary_slip_print_format",
-  "default_country_code",
-  "test_section",
-  "test_mode",
-  "test_chat_id"
- ],
- "fields": [
-  {
-   "default": "0",
-   "fieldname": "enabled",
-   "fieldtype": "Check",
-   "label": "Enabled"
-  },
-  {
-   "description": "e.g. http://localhost:2785 (where the OpenWA Docker container runs)",
-   "fieldname": "base_url",
-   "fieldtype": "Data",
-   "label": "OpenWA Base URL"
-  },
-  {
-   "description": "X-API-Key created in the OpenWA dashboard",
-   "fieldname": "api_key",
-   "fieldtype": "Password",
-   "label": "API Key"
-  },
-  {
-   "fieldname": "column_break_1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "default",
-   "description": "The OpenWA session (WhatsApp account) to send from",
-   "fieldname": "session_id",
-   "fieldtype": "Data",
-   "label": "Session ID"
-  },
-  {
-   "description": "Number: 9779812345678@c.us \u2014 or a group: 1203630XXXXXXX@g.us (get group IDs from the OpenWA dashboard)",
-   "fieldname": "chat_id",
-   "fieldtype": "Data",
-   "label": "Recipient Chat ID"
-  },
-  {
-   "default": "IN and OUT",
-   "fieldname": "notify_on",
-   "fieldtype": "Select",
-   "label": "Notify On",
-   "options": "IN and OUT\nIN only\nOUT only"
-  },
-  {
-   "fieldname": "section_break_session",
-   "fieldtype": "Section Break",
-   "label": "Session Status & QR Code"
-  },
-  {
-   "default": "unknown",
-   "description": "Current connection status of the WhatsApp session",
-   "fieldname": "session_status",
-   "fieldtype": "Select",
-   "label": "Session Status",
-   "options": "ready\nconnected\nqr_ready\ndisconnected\ncreated\nunknown\nerror",
-   "read_only": 1
-  },
-  {
-   "fieldname": "session_qr",
-   "fieldtype": "HTML",
-   "label": "QR Code (scan with WhatsApp on phone)",
-   "options": "<div style='padding:20px;text-align:center;color:#888;'><p style='font-size:14px;'>📱 Configure settings on the left, then click <b>Refresh Status & QR</b> at the top.</p><p style='font-size:12px;'>The QR code will appear here automatically when the session is ready to pair.</p></div>",
-   "read_only": 1
-  },
-  {
-   "fieldname": "session_phone",
-   "fieldtype": "Data",
-   "label": "Linked Phone",
-   "read_only": 1
-  },
-  {
-   "fieldname": "session_pushname",
-   "fieldtype": "Data",
-   "label": "WhatsApp Name",
-   "read_only": 1
-  },
-  {
-   "fieldname": "salary_section",
-   "fieldtype": "Section Break",
-   "label": "Salary Slip Delivery"
-  },
-  {
-   "default": "0",
-   "description": "Sends to the employee's Mobile (cell_number on the Employee record). Verify numbers first \u2014 salary data is sensitive.",
-   "fieldname": "send_salary_slips",
-   "fieldtype": "Check",
-   "label": "Send Salary Slip PDF to employee on submit"
-  },
-  {
-   "description": "Leave blank for the default format",
-   "fieldname": "salary_slip_print_format",
-   "fieldtype": "Link",
-   "label": "Salary Slip Print Format",
-   "options": "Print Format"
-  },
-  {
-   "description": "Digits only, e.g. 977. Prefixed to employee mobile numbers that don't already include a country code.",
-   "fieldname": "default_country_code",
-   "fieldtype": "Data",
-   "label": "Default Country Code"
-  },
-  {
-   "fieldname": "test_section",
-   "fieldtype": "Section Break",
-   "label": "Testing"
-  },
-  {
-   "default": "0",
-   "description": "When enabled, all WhatsApp notifications go to the Test Chat ID below instead of employee phones. Use for testing without disturbing employees.",
-   "fieldname": "test_mode",
-   "fieldtype": "Check",
-   "label": "Test Mode"
-  },
-  {
-   "depends_on": "eval:doc.test_mode",
-   "description": "Chat ID to receive test notifications (e.g., 919106526195@c.us for Mitesh). Only used when Test Mode is enabled.",
-   "fieldname": "test_chat_id",
-   "fieldtype": "Data",
-   "label": "Test Chat ID"
-  }
- ],
- "issingle": 1,
- "links": [],
- "modified": "2026-07-13 08:00:00.000000",
- "modified_by": "Administrator",
- "module": "Gravures Custom",
- "name": "OpenWA Settings",
- "owner": "Administrator",
- "permissions": [
-  {
-   "create": 1,
-   "read": 1,
-   "role": "System Manager",
-   "write": 1
-  },
-  {
-   "create": 1,
-   "read": 1,
-   "role": "HR Manager",
-   "write": 1
-  }
- ],
- "row_format": "Dynamic",
- "sort_field": "creation",
- "sort_order": "DESC",
- "states": []
+	"actions": [],
+	"creation": "2026-07-16 23:30:00.000000",
+	"doctype": "DocType",
+	"engine": "InnoDB",
+	"field_order": [
+		"enabled",
+		"base_url",
+		"api_key",
+		"column_break_1",
+		"session_id",
+		"chat_id",
+		"default_country_code",
+		"section_break_session",
+		"session_status",
+		"session_qr",
+		"session_phone",
+		"session_pushname"
+	],
+	"fields": [
+		{
+			"default": "0",
+			"fieldname": "enabled",
+			"fieldtype": "Check",
+			"label": "Enabled"
+		},
+		{
+			"description": "e.g. http://localhost:2785 (where the OpenWA Docker container runs)",
+			"fieldname": "base_url",
+			"fieldtype": "Data",
+			"label": "OpenWA Base URL"
+		},
+		{
+			"description": "X-API-Key created in the OpenWA dashboard",
+			"fieldname": "api_key",
+			"fieldtype": "Password",
+			"label": "API Key"
+		},
+		{
+			"fieldname": "column_break_1",
+			"fieldtype": "Column Break"
+		},
+		{
+			"default": "default",
+			"description": "The OpenWA session (WhatsApp account) to send from",
+			"fieldname": "session_id",
+			"fieldtype": "Data",
+			"label": "Session ID"
+		},
+		{
+			"description": "Number: 9876543210@c.us — or a group: 1203630XXXXXXX@g.us (get group IDs from the OpenWA dashboard)",
+			"fieldname": "chat_id",
+			"fieldtype": "Data",
+			"label": "Default Recipient Chat ID"
+		},
+		{
+			"default": "91",
+			"description": "Digits only, e.g. 91. Prefixed to employee mobile numbers that don't already include a country code.",
+			"fieldname": "default_country_code",
+			"fieldtype": "Data",
+			"label": "Default Country Code"
+		},
+		{
+			"fieldname": "section_break_session",
+			"fieldtype": "Section Break",
+			"label": "Session Status & QR Code"
+		},
+		{
+			"default": "unknown",
+			"description": "Current connection status of the WhatsApp session",
+			"fieldname": "session_status",
+			"fieldtype": "Select",
+			"label": "Session Status",
+			"options": "ready\nconnected\nqr_ready\ndisconnected\ncreated\nunknown\nerror",
+			"read_only": 1
+		},
+		{
+			"fieldname": "session_qr",
+			"fieldtype": "HTML",
+			"label": "QR Code (scan with WhatsApp on phone)",
+			"options": "<div style='padding:20px;text-align:center;color:#888;'><p style='font-size:14px;'>📱 Configure settings on the left, then click <b>Refresh Status & QR</b> at the top.</p><p style='font-size:12px;'>The QR code will appear here automatically when the session is ready to pair.</p></div>",
+			"read_only": 1
+		},
+		{
+			"fieldname": "session_phone",
+			"fieldtype": "Data",
+			"label": "Linked Phone",
+			"read_only": 1
+		},
+		{
+			"fieldname": "session_pushname",
+			"fieldtype": "Data",
+			"label": "WhatsApp Name",
+			"read_only": 1
+		}
+	],
+	"issingle": 1,
+	"links": [],
+	"modified": "2026-07-16 23:30:00.000000",
+	"modified_by": "Administrator",
+	"module": "Gravures Custom",
+	"name": "OpenWA Settings",
+	"owner": "Administrator",
+	"permissions": [
+		{
+			"create": 1,
+			"read": 1,
+			"role": "System Manager",
+			"write": 1
+		},
+		{
+			"create": 1,
+			"read": 1,
+			"role": "HR Manager",
+			"write": 1
+		}
+	],
+	"row_format": "Dynamic",
+	"sort_field": "creation",
+	"sort_order": "DESC",
+	"states": []
 }
