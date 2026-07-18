@@ -291,6 +291,7 @@ def enqueue_whatsapp_send(action_type: str, log_name: str | None = None, **kwarg
             message_type=kwargs.pop("message_type", "Custom"),
             meta=kwargs.pop("meta", {}),
         )
+        frappe.db.commit()
 
     job = frappe.enqueue(
         "gravures_custom.overrides.whatsapp_queue._execute_whatsapp_send",
@@ -402,9 +403,9 @@ def _update_log(log_name: str | None, status: str, error: str | None = None) -> 
         return
     try:
         from gravures_custom.gravures_custom.doctype.whatsapp_send_log.whatsapp_send_log import (
-            update_whatsapp_log_status,
+            update_log_status,
         )
-        update_whatsapp_log_status(log_name, status, error)
+        update_log_status(log_name, status, error)
     except Exception:
         pass
 
