@@ -8,40 +8,38 @@ from urllib.parse import urljoin
 import requests
 from frappe.utils.file_manager import get_file_path as get_file_path_util
 
-try:
-    import phonenumbers
-    from phonenumbers import NumberParseException, PhoneNumberType
-    PHONENUMBERS_AVAILABLE = True
-except ImportError:
-    phonenumbers = None
-    NumberParseException = Exception
-    PhoneNumberType = None
-    PHONENUMBERS_AVAILABLE = False
-
-
-def log_whatsapp_send(*args, **kwargs):
-    from kreativ_notification.notification.send_log import create_log
-    return create_log(*args, **kwargs)
-
-
-def update_whatsapp_log_status(*args, **kwargs):
-    from kreativ_notification.notification.send_log import update_log_status
-    return update_log_status(*args, **kwargs)
-
-
 # ---------------------------------------------------------------------------
-# Circuit breaker — delegates to consolidated whatsapp_queue module
+# Circuit breaker / OpenWAClient / Queue — delegate to kreativ_notification
 # ---------------------------------------------------------------------------
 
-from gravures_custom.overrides.whatsapp_queue import (
-    check_circuit_breaker as _check_whatsapp_circuit_breaker,
-    increment_circuit_breaker as _increment_whatsapp_circuit_breaker,
-    reset_circuit_breaker as _reset_whatsapp_circuit_breaker,
-    get_openwa_config as _get_openwa_config,
+from kreativ_notification.notification.openwa_client import (
+    check_circuit_breaker as _check_circuit_breaker,
+    increment_circuit_breaker as _increment_circuit_breaker,
+    reset_circuit_breaker as _reset_circuit_breaker,
     OpenWAClient,
-    enqueue_whatsapp_send,
 )
 
+from kreativ_notification.notification.send import (
+    send_document_via_whatsapp,
+    send_image_via_whatsapp,
+    send_text_via_whatsapp,
+)
+
+from kreativ_notification.notification.send_log import create_log as log_whatsapp_send
+from kreativ_notification.notification.send_log import update_log_status as update_whatsapp_log_status
+
+from kreativ_notification.notification.dispatcher import dispatch as dispatch_whatsapp
+from kreativ_notification.notification.pdf_utils import generate_pdf_bytes, screenshot_html
+
+
+def _check_whatsapp_circuit_breaker():
+    """Backward-compat shim."""
+    _check_circuit_breaker()
+
+
+# ---------------------------------------------------------------------------
+# Log helpers
+# ---------------------------------------------------------------------------
 
 def _log_whatsapp_send(
     source_doctype: str,
@@ -65,7 +63,6 @@ def _log_whatsapp_send(
         )
         return log_name
     except Exception:
-        # Don't let logging failure break the send
         frappe.log_error(
             title="WhatsApp Send Log creation failed",
             message=frappe.get_traceback(),
@@ -85,247 +82,30 @@ def _update_log_result(log_name: str, success: bool, error_message: str = ""):
             message=frappe.get_traceback(),
         )
 
-def validate_phone_number(phone: str, default_country: str = "IN") -> dict:
-    """Validate and format a phone number for WhatsApp.
-
-    Uses phonenumbers library (Google's libphonenumber port) to:
-    - Parse the number with given default country
-    - Check if valid mobile number
-    - Return E.164 format (+919876543210) and WhatsApp chat_id (919876543210@c.us)
-
-    Args:
-        phone: Raw phone number input (digits only, may include country code)
-        default_country: ISO country code for parsing (default: IN for India)
-
-    Returns:
-        Dict with: valid, formatted, e164, chat_id, error
-    """
-    if not PHONENUMBERS_AVAILABLE:
-        # Fallback: basic validation if library not available
-        digits = re.sub(r"[^0-9]", "", phone or "")
-        if len(digits) >= 10:
-            # Assume India (91) if no country code detected
-            if len(digits) == 10:
-                digits = "91" + digits
-            elif len(digits) == 12 and digits.startswith("91"):
-                pass
-            else:
-                return {"valid": False, "error": "Invalid phone number format"}
-            return {
-                "valid": True,
-                "formatted": digits,
-                "e164": "+" + digits,
-                "chat_id": digits + "@c.us",
-                "error": None,
-            }
-        return {"valid": False, "error": "Phone number too short (min 10 digits)"}
-
-    try:
-        # Handle input that may already have + or spaces
-        parsed = phonenumbers.parse(phone or "", default_country)
-
-        if not phonenumbers.is_valid_number(parsed):
-            return {"valid": False, "error": "Invalid phone number"}
-
-        # Check if it's a mobile number (WhatsApp requires mobile)
-        num_type = phonenumbers.number_type(parsed)
-        if num_type not in (PhoneNumberType.MOBILE, PhoneNumberType.FIXED_LINE_OR_MOBILE):
-            return {"valid": False, "error": "Must be a mobile number (no landlines)"}
-
-        # Format as E.164 (+919876543210)
-        e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-        # WhatsApp chat_id format: 919876543210@c.us (digits only, no +)
-        digits = e164.lstrip("+")
-        chat_id = digits + "@c.us"
-
-        return {
-            "valid": True,
-            "formatted": phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL),
-            "e164": e164,
-            "chat_id": chat_id,
-            "error": None,
-        }
-    except NumberParseException as e:
-        return {"valid": False, "error": f"Could not parse phone number: {e}"}
-    except Exception as e:
-        frappe.log_error("Phone validation error", frappe.get_traceback())
-        return {"valid": False, "error": "Validation error"}
-
-
-@frappe.whitelist()
-def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, letterhead=None, settings=None, _lang=None):
-    # Use _generate_pdf_bytes which inlines local images as base64
-    # to avoid Chrome's auth-less image fetches (401 errors for logos)
-    pdf = _generate_pdf_bytes(
-        doctype, name, print_format=format,
-        no_letterhead=no_letterhead, letterhead=letterhead
-    )
-    frappe.local.response.filename = f"{name}.pdf"
-    frappe.local.response.filecontent = pdf
-    frappe.local.response.type = "download"
-
 
 # ---------------------------------------------------------------------------
-# Generic helpers
+# Legacy OpenWAClient shims (for backward compat)
 # ---------------------------------------------------------------------------
 
-def _chrome_path():
-    """Return path to Chrome/Chromium binary. Uses shutil.which for portability.
-
-    Checks known binary names first (portable across systems), then
-    falls back to the known working path on this server.
-    """
-    import shutil
-    for binary in ("/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell", "chromium", "chromium-browser", "google-chrome",
-                   "google-chrome-stable", "chrome",
-                   "/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell"):
-        path = shutil.which(binary) if not binary.startswith("/") else binary
-        if path and os.path.exists(path):
-            return path
-    return shutil.which("chromium") or shutil.which("google-chrome") or "/usr/bin/chromium"
-
-
-def _generate_pdf_bytes(doctype, name, print_format=None, no_letterhead=0, letterhead=None):
-    """Render any Document as PDF bytes via Chromium headless.
-    Inlines `/files/...` images as base64 to avoid Chromium's auth-less
-    image fetches (which return 401 / break the logo etc.).
-
-    SECURITY: Read files from local filesystem instead of fetching via HTTP
-    to prevent SSRF (Server-Side Request Forgery). Only processes local
-    `/files/...` and `/private/files/...` URLs. External URLs are skipped."""
-    html = frappe.get_print(
-        doctype, name, print_format=print_format, doc=None,
-        no_letterhead=no_letterhead, letterhead=letterhead, as_pdf=False,
-    )
-
-    # Strip the printview "Print | Get PDF" action banner that gets
-    # embedded when generating PDF output — keeps the PDF clean.
-    html = re.sub(r'<div\s+class="action-banner[^"]*"[^>]*>.*?</div>', '', html, flags=re.DOTALL)
-
-    # Find all <img src="/files/..."> and <img src="/private/files/..."> (relative paths)
-    # and inline them by reading from local filesystem.
-    # This avoids SSRF that would occur if we fetched via HTTP.
-    img_re = re.compile(r'(<img[^>]*\ssrc=["\'])((?:/private)?/files/[^"\']*\.(?:png|jpe?g|gif|svg|webp|bmp))(["\'])', re.IGNORECASE)
-    seen = {}
-
-    def inline_img(match):
-        file_url = match.group(2)
-        if file_url in seen:
-            return match.group(1) + seen[file_url] + match.group(3)
-
-        # Get local filesystem path for the file
-        file_path = get_file_path_util(file_url)
-        if not file_path or not os.path.exists(file_path):
-            return match.group(0)
-
-        try:
-            with open(file_path, "rb") as f:
-                content = f.read()
-            if not content:
-                return match.group(0)
-
-            b64 = base64.b64encode(content).decode("utf-8")
-            # Determine MIME type from extension
-            ext = file_url.rsplit(".", 1)[-1].lower()
-            mime_map = {
-                "png": "image/png",
-                "jpg": "image/jpeg",
-                "jpeg": "image/jpeg",
-                "gif": "image/gif",
-                "svg": "image/svg+xml",
-                "webp": "image/webp",
-                "bmp": "image/bmp",
-            }
-            mime = mime_map.get(ext, "image/png")
-            data_uri = "data:{0};base64,{1}".format(mime, b64)
-            seen[file_url] = data_uri
-            return match.group(1) + data_uri + match.group(3)
-        except Exception:
-            return match.group(0)
-
-    # Replace local `/files/...` and `/private/files/...` in HTML
-    html = img_re.sub(inline_img, html)
-
-    # SECURITY: Skip absolute/external URLs (https://..., http://...)
-    # to prevent SSRF. External images will not be inlined and may
-    # appear broken in PDF, but this is safer than fetching arbitrary URLs.
-    # If needed, add a whitelist of allowed domains in the future.
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-        f.write(html)
-        html_path = f.name
-    fd, pdf_path = tempfile.mkstemp(suffix='.pdf')
-    os.close(fd)
+def _get_openwa_config() -> tuple[str, str, str]:
+    """Return (base_url, api_key, session_id) — any may be blank."""
     try:
-        cmd = [_chrome_path(), '--headless', '--no-sandbox', '--disable-gpu',
-               '--force-device-scale-factor=2',
-               '--no-pdf-header-footer', '--print-to-pdf=' + pdf_path, html_path]
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
-        with open(pdf_path, 'rb') as f:
-            return f.read()
-    except subprocess.CalledProcessError as e:
-        frappe.log_error(f"Chrome PDF generation failed: {e.stderr}")
-        frappe.throw("PDF generation failed. Check error logs.")
-    finally:
-        os.unlink(html_path)
-        if os.path.exists(pdf_path):
-            os.unlink(pdf_path)
-
-
-def _update_log_result(log_name, success, error_message=None):
-    """Update a WhatsApp Send Log entry with send result."""
-    if not log_name:
-        return
-    try:
-        from kreativ_notification.notification.send_log import update_log_status
-        update_log_status(log_name, "Sent" if success else "Failed", error_message)
+        settings = frappe.get_cached_doc("OpenWA Settings")
+        base_url = (settings.get("base_url") or "").strip().rstrip("/")
+        api_key = settings.get_password("api_key", raise_exception=False) or ""
+        session_id = (settings.get("session_id") or "default").strip()
+        return base_url, api_key, session_id
     except Exception:
-        frappe.log_error("Failed to update WhatsApp Send Log", frappe.get_traceback())
+        return "", "", "default"
 
 
-def _send_document_via_whatsapp(doc_b64, filename, caption, chat_id_override=None,
-                                    source_doctype=None, source_docname=None, source_print_format=None):
-    """Send a base64 PDF/document via OpenWAClient (consolidated — Item 15).
-
-    Logs send attempt, calls OpenWAClient, updates log with result.
-    Falls back to inline requests only if OpenWAClient fails.
-    """
-    _check_whatsapp_circuit_breaker()
-    settings = frappe.get_cached_doc("OpenWA Settings")
-    if not settings.enabled:
-        frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    chat_id = chat_id_override or settings.chat_id
-    if not chat_id:
-        frappe.throw("No Chat ID in OpenWA Settings.")
-
-    # Create log entry
-    log_name = _log_whatsapp_send(
-        source_doctype=source_doctype or "Unknown",
-        source_docname=source_docname or "",
-        recipient=chat_id,
-        recipient_display=caption,
-        message_type="Print PDF",
-        source_print_format=source_print_format or "",
-        meta={"filename": filename, "caption": caption},
-    )
-
-    client = OpenWAClient()
-    result = client.send_document(chat_id, doc_b64, filename, caption=caption)
-
-    if result.get("success"):
-        _reset_whatsapp_circuit_breaker()
-        _update_log_result(log_name, True)
-        return {"success": True, "message": "Sent!", "messageId": result.get("data", {}).get("messageId")}
-    else:
-        error_msg = result.get("error", "Unknown error")
-        _increment_whatsapp_circuit_breaker()
-        _update_log_result(log_name, False, error_msg)
-        frappe.throw(error_msg)
-
+# ---------------------------------------------------------------------------
+# Dashboard senders — delegate to kreativ_notification dispatcher
+# ---------------------------------------------------------------------------
 
 @frappe.whitelist()
 def send_print_pdf_whatsapp(doctype, name, print_format=None, chat_id=None):
-    """Generate PDF and enqueue WhatsApp send (background queue - Item 16)."""
+    """Generate PDF and enqueue WhatsApp send via unified dispatcher."""
     if not doctype or not name:
         frappe.throw("doctype and name are required")
 
@@ -333,49 +113,74 @@ def send_print_pdf_whatsapp(doctype, name, print_format=None, chat_id=None):
     recipient = chat_id or settings.chat_id
     filename = "{0}_{1}.pdf".format(doctype.replace(" ", "_"), name)
 
-    # Enqueue the PDF generation + send to background worker
-    return enqueue_whatsapp_send(
-        action_type="send_pdf",
+    pdf_bytes = generate_pdf_bytes(doctype, name, print_format=print_format)
+    base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+
+    return dispatch_whatsapp(
+        recipient=recipient,
+        text=filename,
+        file_b64=base64_pdf,
+        filename=filename,
+        mimetype="application/pdf",
+        message_type="Print PDF",
         source_doctype=doctype,
         source_docname=name,
-        recipient=recipient,
-        message_type="Print PDF",
-        meta={"filename": filename},
-        doctype=doctype,
-        name=name,
-        print_format=print_format,
-        chat_id=chat_id,
+        source_print_format=print_format or "",
     )
 
 
 @frappe.whitelist()
+def _send_document_via_whatsapp(doc_b64, filename, caption, chat_id_override=None,
+                                    source_doctype=None, source_docname=None, source_print_format=None):
+    """Legacy shim: delegate to kreativ_notification.send."""
+    return send_document_via_whatsapp(
+        doc_b64, filename, caption,
+        chat_id_override=chat_id_override,
+        source_doctype=source_doctype,
+        source_docname=source_docname,
+        source_print_format=source_print_format,
+    )
+
+
+@frappe.whitelist()
+def _send_image_via_whatsapp(image_b64, filename, caption, chat_id_override=None):
+    """Legacy shim: delegate to kreativ_notification.send."""
+    return send_image_via_whatsapp(
+        image_b64, filename, caption,
+        chat_id_override=chat_id_override,
+    )
+
+
+def _dispatch_screenshot(html, filename, caption, width=1000,
+                            source_doctype="Dispatch", source_docname="",
+                            message_type="Screenshot", meta=None):
+    """Render HTML to PNG and enqueue WhatsApp send via unified dispatcher."""
+    settings = frappe.get_cached_doc("OpenWA Settings")
+    recipient = settings.chat_id
+
+    png_bytes = screenshot_html(html, width=width)
+    image_b64 = base64.b64encode(png_bytes).decode("utf-8")
+
+    return dispatch_whatsapp(
+        recipient=recipient,
+        text=caption,
+        file_b64=image_b64,
+        filename=filename,
+        mimetype="image/png",
+        message_type=message_type,
+        source_doctype=source_doctype,
+        source_docname=source_docname,
+        meta=meta,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chat/Contact fetchers (keep - they query OpenWA directly, not via queue)
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
 def get_whatsapp_chats(search=None):
-    """Fetch recent chats from OpenWA for the contact picker.
-
-    Uses the /chats endpoint which returns recent conversations with
-    last message previews, unread counts, and timestamps. Works with
-    OpenWA v0.8.19+ (the previous /contacts endpoint was a fallback for
-    when /chats was broken).
-
-    Responses are cached for 5 minutes.
-
-    Args:
-        search: Optional search string to filter chats by name/number
-
-    Response shape:
-    {
-        "chats": [ {"id": "...", "name": "...", "isGroup": false,
-                     "lastMessage": "...", "timestamp": 1234567890,
-                     "unreadCount": 0}, ... ],
-        "groups": [ {"id": "...", "name": "...", "isGroup": true,
-                     "lastMessage": "...", "timestamp": 1234567890,
-                     "unreadCount": 0}, ... ]
-    }
-
-    Permission: Blocked for Employee, Graphics, Proofing, Engraving roles
-    UNLESS user also has admin role (System Manager, HR Manager, etc).
-    All other roles allowed.
-    """
+    """Fetch recent chats from OpenWA for the contact picker."""
     # --- Permission check: whitelist admin roles, block restricted roles ---
     admin_roles = {
         "System Manager",
@@ -412,7 +217,7 @@ def get_whatsapp_chats(search=None):
 
     cache_key = "openwa_chats_list"
     if search:
-        cache_key = "openwa_chats_search_{}".format(frappe.safe_encode(search).decode()[:50])
+        cache_key = "openwa_chats_search_{0}".format(frappe.safe_encode(search).decode()[:50])
     cached = frappe.cache().get_value(cache_key)
     if cached:
         return cached
@@ -429,9 +234,6 @@ def get_whatsapp_chats(search=None):
     headers = {"X-API-Key": api_key}
     result = {"chats": [], "groups": []}
 
-    # Fetch recent chats from OpenWA /chats endpoint
-    # This returns real conversations with last message previews,
-    # unread counts, timestamps — all sorted by most recent activity.
     try:
         r = requests.get(
             "{0}/api/sessions/{1}/chats".format(base_url.rstrip("/"), session_id),
@@ -442,7 +244,6 @@ def get_whatsapp_chats(search=None):
             seen = set()
             search_lower = (search or "").lower()
 
-            # Sort by timestamp descending (most recent first)
             chats.sort(key=lambda c: c.get("timestamp") or 0, reverse=True)
 
             for c in chats:
@@ -457,7 +258,6 @@ def get_whatsapp_chats(search=None):
                 unread = c.get("unreadCount") or 0
                 ts = c.get("timestamp") or 0
 
-                # Client-side filter if search provided
                 if search_lower:
                     name_match = search_lower in name.lower()
                     id_match = search_lower in cid.lower()
@@ -481,7 +281,6 @@ def get_whatsapp_chats(search=None):
     except Exception:
         frappe.log_error(title="OpenWA chats fetch failed", message=frappe.get_traceback())
 
-    # Cache for 5 minutes (shorter for search results)
     expires = 60 if search else 300
     frappe.cache().set_value(cache_key, result, expires_in_sec=expires)
     return result
@@ -489,14 +288,7 @@ def get_whatsapp_chats(search=None):
 
 @frappe.whitelist()
 def search_whatsapp_contacts(query):
-    """Server-side search for WhatsApp contacts.
-
-    Called from the Print Preview WhatsApp contact picker when user
-    types in the search box or clicks the search button.
-
-    Note: frappe.call passes args as dict, so query may be {'query': '...'} or '...'
-    """
-    # Handle both string and dict (from frappe.call)
+    """Server-side search for WhatsApp contacts."""
     if isinstance(query, dict):
         query = query.get('query', '')
     if not query or len(query.strip()) < 1:
@@ -504,191 +296,26 @@ def search_whatsapp_contacts(query):
     return get_whatsapp_chats(search=query.strip())
 
 
-def _screenshot_html(html_content, width=1000):
-    """Render HTML to full-page PNG via Chromium headless, return raw PNG bytes.
-
-    Fixes:
-    - Full page capture: uses large window height (20000px) so Chromium renders all content
-    - Smart crop: detects background color from corner pixels instead of assuming white
-    - Portable Chrome path: uses shutil.which()
-    """
-    from PIL import Image, ImageChops
-    import io
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-        f.write(html_content)
-        html_path = f.name
-    fd, png_path = tempfile.mkstemp(suffix='.png')
-    os.close(fd)
-    try:
-        # Large height (20000) forces Chromium to render full document
-        # --hide-scrollbars prevents scrollbar artifacts
-        cmd = [_chrome_path(), '--headless', '--no-sandbox', '--disable-gpu',
-               '--force-device-scale-factor=2',
-               '--hide-scrollbars',
-               '--window-size={0},20000'.format(width),
-               '--screenshot=' + png_path, html_path]
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
-        img = Image.open(png_path)
-
-        # ---- Smart crop: detect background from corners ----
-        # Sample 4 corners to determine background color (handles gray/colored backgrounds)
-        w, h = img.size
-        corner_sample = 10  # pixels from corner
-        corners = [
-            img.crop((0, 0, corner_sample, corner_sample)),           # top-left
-            img.crop((w - corner_sample, 0, w, corner_sample)),        # top-right
-            img.crop((0, h - corner_sample, corner_sample, h)),        # bottom-left
-            img.crop((w - corner_sample, h - corner_sample, w, h)),    # bottom-right
-        ]
-        # Find most common color among corners (the background)
-        from collections import Counter
-        corner_colors = []
-        for c in corners:
-            colors = c.getcolors(corner_sample * corner_sample)
-            if colors:
-                corner_colors.append(max(colors, key=lambda x: x[0])[1])
-        if corner_colors:
-            bg_color = Counter(corner_colors).most_common(1)[0][0]
-            # If BG is RGBA, use RGB for comparison
-            if isinstance(bg_color, tuple) and len(bg_color) == 4:
-                bg_color = bg_color[:3]
-
-            # Convert to RGB for comparison
-            if img.mode != 'RGB':
-                img_rgb = img.convert('RGB')
-            else:
-                img_rgb = img
-
-            # Use ImageChops.difference to create mask of non-background pixels
-            bg_image = Image.new('RGB', img_rgb.size, bg_color)
-            diff = ImageChops.difference(img_rgb, bg_image)
-            bbox = diff.getbbox()
-            if bbox:
-                # Add 15px padding at bottom
-                left, top, right, bottom = bbox
-                bottom = min(bottom + 15, h)
-                img = img.crop((0, 0, w, bottom))
-
-        buf = io.BytesIO()
-        img.save(buf, format='PNG')
-        return buf.getvalue()
-    finally:
-        os.unlink(html_path)
-        if os.path.exists(png_path):
-            os.unlink(png_path)
-
-
-def _screenshot_html_playwright(html_content, width=1000):
-    """Render HTML to full-page PNG via Playwright (Chromium), return raw PNG bytes.
-
-    Uses Playwright's full_page=True for true full-page capture without height hacks.
-    Falls back to _screenshot_html if Playwright is not available.
-    """
-    import io
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        # Playwright not installed, fall back to Chromium method
-        return _screenshot_html(html_content, width)
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-        f.write(html_content)
-        html_path = f.name
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-gpu', '--force-device-scale-factor=2']
-            )
-            page = browser.new_page(viewport={'width': width, 'height': 1080})
-            page.goto('file://' + html_path, wait_until='networkidle')
-            # Full page screenshot - captures entire scrollable page
-            png_bytes = page.screenshot(full_page=True, type='png')
-            browser.close()
-        return png_bytes
-    except Exception:
-        # Any error with Playwright, fall back to Chromium method
-        return _screenshot_html(html_content, width)
-    finally:
-        os.unlink(html_path)
-
-
-def _send_image_via_whatsapp(image_b64, filename, caption, chat_id_override=None):
-    """Send a base64 image via OpenWAClient (consolidated - Item 15)."""
-    _check_whatsapp_circuit_breaker()
-    settings = frappe.get_cached_doc("OpenWA Settings")
-    if not settings.enabled:
-        frappe.throw("WhatsApp is disabled in OpenWA Settings.")
-    chat_id = chat_id_override or settings.chat_id
-    if not chat_id:
-        frappe.throw("No Chat ID in OpenWA Settings.")
-
-    client = OpenWAClient()
-    result = client.send_image(chat_id, image_b64, filename, caption=caption)
-
-    if result.get("success"):
-        _reset_whatsapp_circuit_breaker()
-        return {"success": True, "message": "Sent!", "messageId": result.get("data", {}).get("messageId")}
-    else:
-        error_msg = result.get("error", "Unknown error")
-        _increment_whatsapp_circuit_breaker()
-        frappe.throw(error_msg)
-
-
-def _dispatch_screenshot(html, filename, caption, width=1000,
-                            source_doctype="Dispatch", source_docname="",
-                            message_type="Screenshot", meta=None):
-    """Render HTML to PNG and enqueue WhatsApp send (background queue - Item 16).
-
-    Playwright rendering happens in the background worker so the page
-    returns immediately with a "queued" status.
-    """
-    settings = frappe.get_cached_doc("OpenWA Settings")
-    recipient = settings.chat_id
-
-    # Enqueue the screenshot + send to background worker
-    return enqueue_whatsapp_send(
-        action_type="send_screenshot",
-        source_doctype=source_doctype,
-        source_docname=source_docname,
-        recipient=recipient,
-        message_type=message_type,
-        meta=meta or {"filename": filename, "caption": caption},
-        html=html,
-        width=width,
-        filename=filename,
-        caption=caption,
-    )
-
+# ---------------------------------------------------------------------------
+# Format helpers
+# ---------------------------------------------------------------------------
 
 def _format_date_range(from_date, to_date):
-    """Format date range for screenshot captions:
-       - same day → "July 11, 2026"
-       - same month, first-to-last → "July 2026"
-       - same month, partial → "July 5-15, 2026"
-       - same year, multi-month → "July 29 - August 12, 2026"
-       - cross-year → "December 28, 2025 - January 5, 2026"
-    """
+    """Format date range for screenshot captions."""
     import calendar as _cal
     try:
         fy, fm, fd = [int(x) for x in from_date.split("-")]
         ty, tm, td = [int(x) for x in to_date.split("-")]
-        # Same day
         if fy == ty and fm == tm and fd == td:
             return "{0} {1}, {2}".format(_cal.month_name[fm], fd, fy)
-        # Same month, full month (1 to last day)
         last_day = _cal.monthrange(fy, fm)[1]
         if fy == ty and fm == tm and fd == 1 and td == last_day:
             return "{0} {1}".format(_cal.month_name[fm], fy)
-        # Same month, partial
         if fy == ty and fm == tm:
             return "{0} {1}-{2}, {3}".format(_cal.month_name[fm], fd, td, fy)
-        # Same year, different months
         if fy == ty:
             return "{0} {1} - {2} {3}, {4}".format(
                 _cal.month_name[fm], fd, _cal.month_name[tm], td, fy)
-        # Cross year
         return "{0} {1}, {2} - {3} {4}, {5}".format(
             _cal.month_name[fm], fd, fy, _cal.month_name[tm], td, ty)
     except Exception:
@@ -716,11 +343,49 @@ def _build_html_table(columns, rows, title, subtitle=""):
         rows_html += "<tr>{0}</tr>".format(cells)
     table = '<table style="border-collapse:collapse;width:100%;font-size:13px;"><thead><tr>{0}</tr></thead><tbody>{1}</tbody></table>'.format(ths, rows_html)
     return """<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>body{{margin:0;padding:20px;font-family:Arial,sans-serif;background:#fff;}}</style>
+<style>body{margin:0;padding:20px;font-family:Arial,sans-serif;background:#fff;}</style>
 </head><body>
 <h3 style="text-align:center;margin:0 0 10px 0;color:#333;">{0}</h3>
 {1}
 </body></html>""".format(title, table)
+
+
+def _build_table(cols, rows, shift_total=False):
+    ths = "".join('<th style="background:#eef6f9;color:#333;padding:8px 12px;border:1px solid #ddd;font-size:13px;">{0}</th>'.format(c) for c in cols)
+    rows_html = ""
+    total_cyl = 0
+    total_tmm = 0.0
+    has_cyl = any('cylind' in str(c).lower() for c in cols)
+    has_tmm = any('tmm' in str(c).lower() for c in cols)
+    cyl_idx = next((i for i, c in enumerate(cols) if 'cylind' in str(c).lower()), -1)
+    tmm_idx = next((i for i, c in enumerate(cols) if 'tmm' in str(c).lower()), -1)
+    for row in rows:
+        cells = "".join("<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>{0}</td>".format(v) for v in row)
+        rows_html += "<tr>{0}</tr>".format(cells)
+        if cyl_idx >= 0 and cyl_idx < len(row):
+            try:
+                total_cyl += int(float(str(row[cyl_idx]).replace(",", "") or 0))
+            except (ValueError, TypeError):
+                pass
+        if tmm_idx >= 0 and tmm_idx < len(row):
+            try:
+                total_tmm += float(str(row[tmm_idx]).replace(",", "") or 0)
+            except (ValueError, TypeError):
+                pass
+
+    if has_cyl or has_tmm:
+        if shift_total:
+            total_cells = "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'></td>"
+            total_cells += "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>Total</td>"
+        else:
+            total_cells = "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>Total</td>"
+        if has_cyl:
+            total_cells += "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>{0}</td>".format(total_cyl)
+        if has_tmm:
+            total_cells += "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>{0:.2f}</td>".format(total_tmm)
+        rows_html += "<tr style='font-weight:bold;background:#eef6f9;'>{0}</tr>".format(total_cells)
+
+    return '<table style="border-collapse:collapse;width:100%;font-size:13px;"><thead><tr>{0}</tr></thead><tbody>{1}</tbody></table>'.format(ths, rows_html)
 
 
 def _run_report(report_name, filters):
@@ -743,7 +408,7 @@ def _run_report(report_name, filters):
 
 
 # ---------------------------------------------------------------------------
-# Block-specific WhatsApp senders
+# Block-specific WhatsApp senders (dashboard "Send to WhatsApp" buttons)
 # ---------------------------------------------------------------------------
 
 @frappe.whitelist()
@@ -804,47 +469,9 @@ def send_dispatch_whatsapp(from_date=None, to_date=None):
     )
 
 
-def _build_table(cols, rows, shift_total=False):
-    ths = "".join('<th style="background:#eef6f9;color:#333;padding:8px 12px;border:1px solid #ddd;font-size:13px;">{0}</th>'.format(c) for c in cols)
-    rows_html = ""
-    total_cyl = 0
-    total_tmm = 0.0
-    has_cyl = any('cylind' in str(c).lower() for c in cols)
-    has_tmm = any('tmm' in str(c).lower() for c in cols)
-    cyl_idx = next((i for i, c in enumerate(cols) if 'cylind' in str(c).lower()), -1)
-    tmm_idx = next((i for i, c in enumerate(cols) if 'tmm' in str(c).lower()), -1)
-    for row in rows:
-        cells = "".join("<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>{0}</td>".format(v) for v in row)
-        rows_html += "<tr>{0}</tr>".format(cells)
-        if cyl_idx >= 0 and cyl_idx < len(row):
-            try:
-                total_cyl += int(float(str(row[cyl_idx]).replace(",", "") or 0))
-            except (ValueError, TypeError):
-                pass
-        if tmm_idx >= 0 and tmm_idx < len(row):
-            try:
-                total_tmm += float(str(row[tmm_idx]).replace(",", "") or 0)
-            except (ValueError, TypeError):
-                pass
-
-    if has_cyl or has_tmm:
-        if shift_total:
-            total_cells = "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'></td>"
-            total_cells += "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>Total</td>"
-        else:
-            total_cells = "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>Total</td>"
-        if has_cyl:
-            total_cells += "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>{0}</td>".format(total_cyl)
-        if has_tmm:
-            total_cells += "<td style='padding:6px 12px;border:1px solid #eee;font-size:13px;'>{0:.2f}</td>".format(total_tmm)
-        rows_html += "<tr style='font-weight:bold;background:#eef6f9;'>{0}</tr>".format(total_cells)
-
-    return '<table style="border-collapse:collapse;width:100%;font-size:13px;"><thead><tr>{0}</tr></thead><tbody>{1}</tbody></table>'.format(ths, rows_html)
-
-
 @frappe.whitelist()
 def send_engraving_whatsapp(from_date=None, to_date=None):
-    """Engraving details — matches block: grouped by machine, vertical tables, TMM Total row."""
+    """Engraving details — grouped by machine, vertical tables, TMM Total row."""
     from_date = from_date or frappe.utils.today()
     to_date = to_date or frappe.utils.today()
 
@@ -854,7 +481,6 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
     data = result.get("result", [])
     cols = result.get("columns", [])
 
-    # Block column order — including Machine for grouping (hidden in display)
     desired_order = ["Sales Order", "Date", "Customer", "Job Name", "TMM",
                      "Color", "Circum", "Length", "Stylus", "Screen/Angel",
                      "Shadow", "Highlight", "Channel", "Machine", "Remarks"]
@@ -871,7 +497,6 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
     tmm_col = next((c for c in ordered_cols if c.get('label') == "TMM"), None)
     display_cols = [c for c in ordered_cols if c.get('label') != "Machine"]
 
-    # Group rows by machine
     groups = {}
     for row in data:
         machine = row.get(machine_col.get('fieldname')) if machine_col else "Unspecified"
@@ -904,9 +529,8 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
                 tmm_val = float(row.get(tmm_col.get('fieldname')) or 0)
                 machine_tmm += tmm_val
 
-        # Total row
-        total_cells = ""
         tmm_idx_disp = next((i for i, c in enumerate(display_cols) if c.get('label') == "TMM"), -1)
+        total_cells = ""
         for i, c in enumerate(display_cols):
             if i == tmm_idx_disp:
                 total_cells += "<td style='{0}'><b>{1:.2f}</b></td>".format(td_style, machine_tmm)
@@ -924,7 +548,6 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
 <tbody>{2}</tbody>
 </table></div>""".format(machine, ths, rows_html)
 
-    # Caption — per machine + grand total with date range
     date_label = _format_date_range(from_date, to_date)
     caption = "ENGRAVING DETAILS ({0})\n\n".format(date_label)
     for machine in machine_names:
@@ -952,7 +575,7 @@ def send_engraving_whatsapp(from_date=None, to_date=None):
 
 @frappe.whitelist()
 def send_engraving_monthly_whatsapp(from_date=None, to_date=None):
-    """Engraving MONTHLY SUMMARY — matches block's bottom section: Machine | Total TMM only."""
+    """Engraving MONTHLY SUMMARY — Machine | Total TMM only."""
     from_date = from_date or frappe.utils.today()
     to_date = to_date or frappe.utils.today()
 
@@ -1012,7 +635,7 @@ table{{border-collapse:collapse;width:auto;}}
 
 @frappe.whitelist()
 def send_proofing_whatsapp(from_date=None, to_date=None):
-    """Proofing details — matches block: Date column hidden, QTY/Length/Circum renamed, Total QTY+TMM row."""
+    """Proofing details — Date column hidden, QTY/Length/Circum renamed, Total QTY+TMM row."""
     from_date = from_date or frappe.utils.today()
     to_date = to_date or frappe.utils.today()
 
@@ -1022,7 +645,6 @@ def send_proofing_whatsapp(from_date=None, to_date=None):
     data = result.get("result", [])
     cols = result.get("columns", [])
 
-    # Block logic: drop Date column; rename No of Cylinders→QTY, Final Height→Circum, Full Width→Length
     cols = [c for c in cols if c.get('label') != "Date"]
     for c in cols:
         if c.get('label') == "No of Cylinders":
@@ -1059,7 +681,6 @@ def send_proofing_whatsapp(from_date=None, to_date=None):
             if v is not None and v != "":
                 total_tmm += float(v or 0)
 
-    # Total row — Total in first cell, QTY total / TMM total in their columns, blanks elsewhere
     total_cells = ""
     for i, c in enumerate(cols):
         if i == qty_idx:
@@ -1096,7 +717,7 @@ def send_proofing_whatsapp(from_date=None, to_date=None):
 
 @frappe.whitelist()
 def send_dispatch_customer_whatsapp(from_date=None, to_date=None):
-    """Customer dispatch screenshot — matches block: per-customer rows + single Total row."""
+    """Customer dispatch screenshot — per-customer rows + single Total row."""
     from_date = from_date or frappe.utils.today()
     to_date = to_date or frappe.utils.today()
 
@@ -1134,7 +755,6 @@ def send_dispatch_customer_whatsapp(from_date=None, to_date=None):
             if v is not None and v != "":
                 total_tmm += float(v or 0)
 
-    # Total row — Total | CYL | TMM (3-column output: first column Total, second/third = sums)
     total_cells = "<td style='{0}'><b>Total</b></td>".format(td_style)
     if cyl_idx >= 0:
         total_cells += "<td style='{0}'><b>{1}</b></td>".format(td_style, total_cyl)
@@ -1142,7 +762,6 @@ def send_dispatch_customer_whatsapp(from_date=None, to_date=None):
         total_cells += "<td style='{0}'><b>{1:.2f}</b></td>".format(td_style, total_tmm)
     rows_html += "<tr style='font-weight:bold;background:#eef6f9;'>{0}</tr>".format(total_cells)
 
-    # Caption — Customers is the only "summary" metric, total already in screenshot
     date_label = _format_date_range(from_date, to_date)
     caption = "CUSTOMER DISPATCH ({0})\nCustomers: {1}".format(date_label, len(data))
 
@@ -1225,7 +844,7 @@ def send_dispatch_monthly_whatsapp(from_date=None, to_date=None):
 
 @frappe.whitelist()
 def send_dispatch_yearly_whatsapp(from_date=None, to_date=None):
-    """Yearly dispatch screenshot — matches block: grouped by job type, Main vs Excluded."""
+    """Yearly dispatch screenshot — grouped by job type, Main vs Excluded."""
     from_date = from_date or frappe.utils.today()
     to_date = to_date or frappe.utils.today()
 
@@ -1285,11 +904,10 @@ def send_dispatch_yearly_whatsapp(from_date=None, to_date=None):
 
 @frappe.whitelist()
 def send_job_status_whatsapp(from_date=None, to_date=None):
-    """Sales order status — matches block: Workflow State/Count/TMM/Percentage (count-based), no TOTAL row, with top summary line."""
+    """Sales order status — Workflow State/Count/TMM/Percentage (count-based)."""
     from_date = from_date or "2025-10-01"
     to_date = to_date or frappe.utils.today()
 
-    # Block uses frappe.client.get_list with same filters
     conditions = [
         ["docstatus", "in", [0, 1]],
         ["transaction_date", ">=", from_date],
@@ -1302,7 +920,6 @@ def send_job_status_whatsapp(from_date=None, to_date=None):
         filters=conditions,
         limit_page_length=10000) or []
 
-    # Group by workflow_state
     state_map = {}
     for row in sales_orders:
         state = row.get("workflow_state") or "(blank)"
@@ -1358,7 +975,7 @@ def send_job_status_whatsapp(from_date=None, to_date=None):
 
 @frappe.whitelist()
 def send_monthly_report_whatsapp(month=None):
-    """Kreativ monthly summary — matches block: pivoted proofing/engraving/dispatch tables."""
+    """Kreativ monthly summary — pivoted proofing/engraving/dispatch tables."""
     if not month:
         frappe.throw("Month is required (YYYY-MM)")
     from_date = "{0}-01".format(month)
@@ -1366,11 +983,9 @@ def send_monthly_report_whatsapp(month=None):
     to_date = "{0}-{1:02d}".format(month, last_day)
     filters = {"from_date": from_date, "to_date": to_date}
 
-    # Title suffix — month name from selected filter, e.g. "2026-07" -> "July 2026"
     month_label = _format_month(month)
     title_text = "MONTHLY SUMMARY ({0})".format(month_label)
 
-    # Fetch raw report data
     proof_result = frappe.call("frappe.desk.query_report.run",
         report_name="Proofing Details By Date", filters=filters) or {}
     engr_result = frappe.call("frappe.desk.query_report.run",
@@ -1385,7 +1000,7 @@ def send_monthly_report_whatsapp(month=None):
     th = "background:#eef6f9;color:#333;padding:6px 8px;border:1px solid #ddd;font-size:12px;"
     td = "padding:4px 8px;border:1px solid #eee;font-size:12px;"
 
-    # --- PROOFING: group by date → Date, QTY, TMM ---
+    # --- PROOFING: group by date -> Date, QTY, TMM ---
     pgroups = {}
     for row in proof_data:
         dt = str(row.get("date", "")) if isinstance(row, dict) else ""
@@ -1413,7 +1028,7 @@ def send_monthly_report_whatsapp(month=None):
 <thead><tr><th style="{0}">Date</th><th style="{0}">QTY</th><th style="{0}">TMM</th></tr></thead>
 <tbody>{1}</tbody></table>""".format(th, p_rows_html) if p_dates else '<p style="text-align:center;color:#999;">No data</p>'
 
-    # --- ENGRAVING: group by date+machine → pivot columns per machine ---
+    # --- ENGRAVING: group by date+machine -> pivot columns per machine ---
     emgroups = {}
     all_machines = set()
     for row in engr_data:
@@ -1466,7 +1081,6 @@ def send_monthly_report_whatsapp(month=None):
     excluded_types = ["AIIR", "SFOC", "CFOC"]
 
     def build_dispatch_pivot(data, job_types):
-        # Group by date × job_type
         dj = {}
         present_types = set()
         for row in data:
@@ -1539,7 +1153,6 @@ def send_monthly_report_whatsapp(month=None):
     dispatch_html = '<div><h6 style="text-align:center;">Main Types</h6>{0}</div><div style="margin-top:10px;"><h6 style="text-align:center;">Excluded Types</h6>{1}</div>'.format(
         main_dispatch, excl_dispatch)
 
-    # Caption totals — must match what's shown in the screenshot tables
     main_d_cyl = sum(float(r.get("total_cylinders", 0) or 0) for r in disp_data
                      if isinstance(r, dict) and r.get("job_type") in main_types)
     main_d_tmm = sum(float(r.get("total_tmm", 0) or 0) for r in disp_data
@@ -1548,8 +1161,6 @@ def send_monthly_report_whatsapp(month=None):
                      if isinstance(r, dict) and r.get("job_type") in excluded_types)
     excl_d_tmm = sum(float(r.get("total_tmm", 0) or 0) for r in disp_data
                      if isinstance(r, dict) and r.get("job_type") in excluded_types)
-    # p_total_qty already aggregated in proofing section (matches screenshot's Total row)
-    # e_grand is engraving TMM total (matches screenshot's Total row)
 
     title_bold = "*{0}*".format(title_text)
     caption = "{0}\n\n".format(title_bold)
@@ -1577,16 +1188,12 @@ def send_monthly_report_whatsapp(month=None):
 
 
 # ---------------------------------------------------------------------------
-# OpenWA Settings Whitelisted Methods (for Gravures Custom - kreativ216)
+# OpenWA Settings Whitelisted Methods
 # ---------------------------------------------------------------------------
-
-# NOTE: _get_openwa_settings and _openwa_headers removed in Item 15.
-# OpenWAClient handles configuration internally.
-
 
 @frappe.whitelist()
 def get_openwa_session_status():
-    """Fetch current session status from OpenWA gateway (via OpenWAClient - Item 15)."""
+    """Fetch current session status from OpenWA gateway."""
     frappe.only_for(("System Manager", "HR Manager"))
     client = OpenWAClient()
     return client.get_session_status()
@@ -1594,7 +1201,7 @@ def get_openwa_session_status():
 
 @frappe.whitelist()
 def get_openwa_session_qr():
-    """Get QR code image for the session (via OpenWAClient - Item 15)."""
+    """Get QR code image for the session."""
     frappe.only_for(("System Manager", "HR Manager"))
     client = OpenWAClient()
     return client.get_session_qr()
@@ -1602,7 +1209,7 @@ def get_openwa_session_qr():
 
 @frappe.whitelist()
 def start_openwa_session():
-    """Start/Restart the WhatsApp session (via OpenWAClient - Item 15)."""
+    """Start/Restart the WhatsApp session."""
     frappe.only_for(("System Manager", "HR Manager"))
     client = OpenWAClient()
     return client.start_session()
@@ -1610,7 +1217,7 @@ def start_openwa_session():
 
 @frappe.whitelist()
 def stop_openwa_session():
-    """Stop the WhatsApp session (via OpenWAClient - Item 15)."""
+    """Stop the WhatsApp session."""
     frappe.only_for(("System Manager", "HR Manager"))
     client = OpenWAClient()
     return client.stop_session()
@@ -1618,35 +1225,33 @@ def stop_openwa_session():
 
 @frappe.whitelist()
 def create_new_openwa_session():
-    """Create a new session on OpenWA and update settings (via OpenWAClient - Item 15)."""
+    """Create a new session on OpenWA and update settings."""
     frappe.only_for(("System Manager", "HR Manager"))
     client = OpenWAClient()
     return client.create_session()
 
 
-
 @frappe.whitelist()
 def send_test_whatsapp():
-    """Enqueue a test WhatsApp message (background queue - Item 16)."""
+    """Enqueue a test WhatsApp message."""
     frappe.only_for(("System Manager", "HR Manager"))
     settings = frappe.get_cached_doc("OpenWA Settings")
     if not settings.chat_id:
         frappe.throw("No Recipient Chat ID set in OpenWA Settings")
 
-    return enqueue_whatsapp_send(
-        action_type="send_test",
-        source_doctype="System",
-        source_docname="",
+    return dispatch_whatsapp(
         recipient=settings.chat_id,
-        message_type="Custom",
-        meta={"test": True},
+        text="✅ Test message from ERPNext — your WhatsApp channel is working.",
+        message_type="Test",
+        source_doctype="System",
+        source_docname="test",
+        priority="Urgent",
     )
-
 
 
 @frappe.whitelist()
 def send_whatsapp_via_openwa(message=None, chat_id=None, file_data=None, file_type=None, filename=None):
-    """Generic WhatsApp send via OpenWAClient (background queue - Item 16)."""
+    """Generic WhatsApp send via dispatcher."""
     frappe.only_for(("System Manager", "HR Manager"))
     settings = frappe.get_cached_doc("OpenWA Settings")
     target_chat = chat_id or settings.chat_id
@@ -1654,7 +1259,6 @@ def send_whatsapp_via_openwa(message=None, chat_id=None, file_data=None, file_ty
     if not target_chat:
         frappe.throw("No Chat ID specified and no default in settings")
 
-    # Convert file_data to base64 if bytes
     file_b64 = ""
     if file_data:
         if isinstance(file_data, bytes):
@@ -1662,7 +1266,6 @@ def send_whatsapp_via_openwa(message=None, chat_id=None, file_data=None, file_ty
         else:
             file_b64 = file_data
 
-    # Determine message type based on file_type
     if file_type and file_data:
         if file_type in ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]:
             msg_type = "Screenshot"
@@ -1671,25 +1274,21 @@ def send_whatsapp_via_openwa(message=None, chat_id=None, file_data=None, file_ty
     else:
         msg_type = "Custom"
 
-    return enqueue_whatsapp_send(
-        action_type="send_manual",
-        source_doctype="System",
-        source_docname="",
+    return dispatch_whatsapp(
         recipient=target_chat,
-        message_type=msg_type,
-        meta={"filename": filename or "document", "message": message or ""},
-        chat_id_override=target_chat,
+        text=message or "",
         file_b64=file_b64,
         filename=filename or "document",
-        text=message or "",
+        mimetype=file_type or "application/pdf",
+        message_type=msg_type,
+        source_doctype="System",
+        source_docname="",
     )
-
 
 
 @frappe.whitelist()
 def switch_theme(theme):
-    """Override for frappe.core.doctype.user.user.switch_theme.
-    Accepts 'Kreativ' in addition to the standard Light/Dark/Automatic."""
+    """Override for frappe.core.doctype.user.user.switch_theme."""
     allowed = ["Light", "Dark", "Automatic", "Kreativ"]
     if theme in allowed:
         frappe.db.set_value("User", frappe.session.user, "desk_theme", theme)
