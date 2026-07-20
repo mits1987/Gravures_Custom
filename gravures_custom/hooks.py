@@ -65,8 +65,10 @@ fixtures = [
 
 # include js, css files in header of desk.html
 app_include_css = "/assets/gravures_custom/css/kreativ_theme.css"
+# Cache busting: bump ?v= date when pushing JS changes through Cloudflare.
+# Frappe v16 include_script() does NOT auto-append a version query, so we add it manually.
 app_include_js = [
-    "/assets/gravures_custom/js/kreativ_theme_toggle.js",
+    "/assets/gravures_custom/js/kreativ_theme_toggle.js?v=20260720",
 ]
 
 # Login page environment marker: injects a "TESTING" banner on non-prod sites.
