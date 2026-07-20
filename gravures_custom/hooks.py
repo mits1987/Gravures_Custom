@@ -66,7 +66,6 @@ fixtures = [
 # include js, css files in header of desk.html
 app_include_css = "/assets/gravures_custom/css/kreativ_theme.css"
 app_include_js = [
-    "/assets/gravures_custom/js/print_whatsapp_v4.js",
     "/assets/gravures_custom/js/kreativ_theme_toggle.js",
 ]
 

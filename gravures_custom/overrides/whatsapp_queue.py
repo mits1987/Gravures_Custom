@@ -402,9 +402,7 @@ def _update_log(log_name: str | None, status: str, error: str | None = None) -> 
     if not log_name:
         return
     try:
-        from gravures_custom.gravures_custom.doctype.whatsapp_send_log.whatsapp_send_log import (
-            update_log_status,
-        )
+        from kreativ_notification.notification.send_log import update_log_status
         update_log_status(log_name, status, error)
     except Exception:
         pass

@@ -18,10 +18,15 @@ except ImportError:
     PhoneNumberType = None
     PHONENUMBERS_AVAILABLE = False
 
-from gravures_custom.gravures_custom.doctype.whatsapp_send_log.whatsapp_send_log import (
-	create_log as log_whatsapp_send,
-	update_log_status as update_whatsapp_log_status,
-)
+
+def log_whatsapp_send(*args, **kwargs):
+    from kreativ_notification.notification.send_log import create_log
+    return create_log(*args, **kwargs)
+
+
+def update_whatsapp_log_status(*args, **kwargs):
+    from kreativ_notification.notification.send_log import update_log_status
+    return update_log_status(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +176,7 @@ def _chrome_path():
     falls back to the known working path on this server.
     """
     import shutil
-    for binary in ("chromium", "chromium-browser", "google-chrome",
+    for binary in ("/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell", "chromium", "chromium-browser", "google-chrome",
                    "google-chrome-stable", "chrome",
                    "/home/mitesh/frappe-bench-v16/chromium/chrome-linux/headless_shell"):
         path = shutil.which(binary) if not binary.startswith("/") else binary
@@ -271,8 +276,8 @@ def _update_log_result(log_name, success, error_message=None):
     """Update a WhatsApp Send Log entry with send result."""
     if not log_name:
         return
-    from ..doctype.whatsapp_send_log.whatsapp_send_log import update_log_status
     try:
+        from kreativ_notification.notification.send_log import update_log_status
         update_log_status(log_name, "Sent" if success else "Failed", error_message)
     except Exception:
         frappe.log_error("Failed to update WhatsApp Send Log", frappe.get_traceback())
