@@ -6,7 +6,6 @@ app_email = "info@kreativ.com"
 app_license = "license"
 
 override_whitelisted_methods = {
-    "frappe.utils.print_format.download_pdf": "gravures_custom.overrides.download_pdf",
     "frappe.core.doctype.user.user.switch_theme": "gravures_custom.overrides.switch_theme",
 }
 
