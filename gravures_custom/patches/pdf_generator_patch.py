@@ -1,15 +1,14 @@
-﻿import frappe
-import subprocess
+﻿import subprocess
 import tempfile
 import os
-from frappe.utils.pdf import get_pdf as original_get_pdf
+
 
 def chrome_get_pdf(html, options=None, output=None):
-    # Write to a file to confirm this function is called
-    with open('/tmp/chrome_pdf_debug.log', 'a') as f:
-        f.write(f"chrome_get_pdf called at {frappe.utils.now()}\n")
     """Use Chrome subprocess if site is configured for Chrome, otherwise fall back."""
-    # If site config does NOT have pdf_generator = "chrome", use original
+    import frappe
+    from frappe.utils.pdf import get_pdf as original_get_pdf
+
+    # Only activate if explicitly enabled via site_config
     if frappe.conf.get("pdf_generator") != "chrome":
         return original_get_pdf(html, options, output)
 
@@ -55,5 +54,10 @@ def chrome_get_pdf(html, options=None, output=None):
         return output
     return pdf
 
-# Replace the original function
-frappe.utils.pdf.get_pdf = chrome_get_pdf
+
+# Deferred patch: apply at runtime when frappe.conf is available
+def apply_patch():
+    import frappe
+    from frappe.utils import pdf as pdf_module
+    if frappe.conf.get("pdf_generator") == "chrome":
+        pdf_module.get_pdf = chrome_get_pdf

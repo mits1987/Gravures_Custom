@@ -133,6 +133,7 @@ update_website_context = [
 
 # before_install = "gravures_custom.install.before_install"
 # after_install = "gravures_custom.install.after_install"
+after_migrate = "gravures_custom.patches.pdf_generator_patch.apply_patch"
 
 # Uninstallation
 # ------------
