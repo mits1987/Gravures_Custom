@@ -1,33 +1,43 @@
 ### Gravures Custom
 
-GC
+GC — Core customizations for Kreativ Gravures ERPNext v16.
+
+**Current Version:** v0.2.0
+
+---
 
 ### Installation
 
-You can install this app using the [bench](https://github.com/frappe/bench) CLI:
-
 ```bash
 cd $PATH_TO_YOUR_BENCH
-bench get-app $URL_OF_THIS_REPO --branch develop
+bench get-app https://github.com/mits1987/Gravures_Custom.git --branch main
 bench install-app gravures_custom
 ```
 
-### Contributing
+### Release v0.2.0 (2026-07-26)
 
-This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:
+| Module | Description |
+|--------|-------------|
+| **Print Designer** | Custom print formats (Sales Order, Dispatch Register, Invoice, etc.) |
+| **WhatsApp Dispatch Dashboards** | 7 Custom HTML Block buttons (Proofing, Dispatch, Engraving, Monthly, Job Status, SO Status, Monthly Report) |
+| **DG ITC GSTR2B** | Input Tax Credit reconciliation against GSTR-2B |
+| **Cylinder Performa** | Cylinder manufacturing performa with stage tracking |
+| **Proforma Invoice** | Enhanced Proforma Invoice with jewellery-specific fields |
+| **Jewellery Manufacturing** | Gold/Silver rate management, making charges, wastage calc |
+| **WhatsApp Send API** | `send_print_pdf_whatsapp` — PDF generation + WhatsApp delivery |
+| **WhatsApp Send Log** | Audit trail for all outbound WhatsApp messages |
+
+### Dependencies
+
+- `kreativ_notification` (WhatsApp engine, OpenWA integration)
+- `kreativ_attendance` (Employee checkin data)
+- `india_compliance` (GST/GSTR)
+
+### Contributing
 
 ```bash
 cd apps/gravures_custom
 pre-commit install
 ```
 
-Pre-commit is configured to use the following tools for checking and formatting your code:
-
-- ruff
-- eslint
-- prettier
-- pyupgrade
-
-### License
-
-unlicense
+Pre-commit: `ruff`, `eslint`, `prettier`, `pyupgrade`
