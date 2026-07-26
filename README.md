@@ -20,7 +20,6 @@ bench install-app gravures_custom
 |--------|-------------|
 | **Print Designer** | Custom print formats (Sales Order, Dispatch Register, Invoice, etc.) |
 | **WhatsApp Dispatch Dashboards** | 7 Custom HTML Block buttons (Proofing, Dispatch, Engraving, Monthly, Job Status, SO Status, Monthly Report) |
-| **DG ITC GSTR2B** | Input Tax Credit reconciliation against GSTR-2B |
 | **Cylinder Performa** | Cylinder manufacturing performa with stage tracking |
 | **Proforma Invoice** | Enhanced Proforma Invoice with jewellery-specific fields |
 | **Jewellery Manufacturing** | Gold/Silver rate management, making charges, wastage calc |
@@ -31,7 +30,6 @@ bench install-app gravures_custom
 
 - `kreativ_notification` (WhatsApp engine, OpenWA integration)
 - `kreativ_attendance` (Employee checkin data)
-- `india_compliance` (GST/GSTR)
 
 ### Contributing
 
