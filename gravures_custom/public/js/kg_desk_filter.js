@@ -1,58 +1,65 @@
 /* KG Desk — hide modules the factory floor doesn't need.
 
  * Runs after the apps screen renders and hides tiles whose labels are
- * not in the ALLOWED list.  Keeps: Home (not a tile, it's the page
- * itself), Frappe HR (Attendance), and Logout (user menu).
+ * not in the ALLOWED list.  Keeps: Frappe HR (Attendance).
  *
- * This is a UI-only filter — it does not change permissions.  An
- * employee who types /app/accounting in the URL bar still gets there.
- * The point is to keep the home screen clean for people who only ever
- * need Attendance.
+ * This is a UI-only filter — it does not change permissions.
  */
 
 (function () {
-	const ALLOWED = [
+	const ALLOWED_HREFS = [
+		"frappe-hr",
+		"hrms",
+		"attendance",
+	];
+
+	const ALLOWED_LABELS = [
 		"frappe hr",
 		"attendance",
 		"kreativ attendance",
+		"home",
 	];
 
 	function hideModules() {
-		const tiles = document.querySelectorAll(
-			".app-icon-item, .app-item, [data-route*='/app/']"
-		);
-		if (!tiles.length) return;
+		/* Frappe v16 renders module tiles as <a> links to /desk/... */
+		const links = document.querySelectorAll('a[href*="/desk/"]');
+		if (!links.length) return;
 
-		tiles.forEach(function (tile) {
-			// Match against visible text label
-			const label = (
-				tile.querySelector(".app-label, .app-name, .ellipsis") ||
-				tile
-			)
-				.textContent.trim()
-				.toLowerCase();
+		links.forEach(function (link) {
+			const href = (link.getAttribute("href") || "").toLowerCase();
+			const text = (link.textContent || "").trim().toLowerCase();
 
-			// Always keep if in allowed list
-			if (ALLOWED.some(function (a) { return label.indexOf(a) !== -1; })) {
-				return;
+			/* Keep links whose URL or label matches the allowed list */
+			var keep = ALLOWED_HREFS.some(function (h) {
+				return href.indexOf(h) !== -1;
+			}) || ALLOWED_LABELS.some(function (l) {
+				return text.indexOf(l) !== -1;
+			});
+
+			if (keep) return;
+
+			/* Hide the link and any sibling text node (module label) */
+			link.style.display = "none";
+
+			/* Also hide the parent grid item if present */
+			var parent = link.parentElement;
+			if (parent && parent.children.length <= 2) {
+				parent.style.display = "none";
 			}
-
-			// Hide everything else
-			tile.style.display = "none";
 		});
 	}
 
-	// Run on initial load and after Frappe SPA navigation
+	/* Run on load */
 	if (document.readyState === "loading") {
 		document.addEventListener("DOMContentLoaded", function () {
-			setTimeout(hideModules, 300);
+			setTimeout(hideModules, 500);
 		});
 	} else {
-		setTimeout(hideModules, 300);
+		setTimeout(hideModules, 500);
 	}
 
-	// Re-run on route change (Frappe SPA)
-	document.addEventListener("click", function () {
-		setTimeout(hideModules, 500);
+	/* Re-run on SPA navigation */
+	frappe.router && frappe.router.on && frappe.router.on("change", function () {
+		setTimeout(hideModules, 300);
 	});
 })();
