@@ -119,6 +119,9 @@ def update_website_context(context):
 
     For non-prod sites we inject the full banner HTML as a raw string
     into the `head_html` context variable. On prod sites we do nothing.
+
+    Skips /ess pages — the ESS PWA has its own UI and the banner
+    interferes with the mobile layout.
     """
     try:
         site = frappe.local.site
@@ -128,6 +131,14 @@ def update_website_context(context):
     # Production check: site_config.json -> environment: "production"
     if frappe.conf.get("environment") == "production":
         return context
+
+    # Skip the banner on ESS pages
+    try:
+        path = frappe.local.request.path or ""
+        if path.startswith("/ess"):
+            return context
+    except Exception:
+        pass
 
     banner = make_banner(site=site, label="TESTING", color=COLOR)
 
