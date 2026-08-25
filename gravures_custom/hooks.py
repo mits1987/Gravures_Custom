@@ -199,23 +199,11 @@ after_migrate = "gravures_custom.patches.pdf_generator_patch.apply_patch"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"gravures_custom.tasks.all"
-# 	],
-# 	"daily": [
-# 		"gravures_custom.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"gravures_custom.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"gravures_custom.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"gravures_custom.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"hourly": [
+		"gravures_custom.api.e_invoice_recovery.recover_missing_e_invoice_logs"
+	],
+}
 
 # Testing
 # -------
