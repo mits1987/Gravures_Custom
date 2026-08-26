@@ -201,7 +201,7 @@ after_migrate = "gravures_custom.patches.pdf_generator_patch.apply_patch"
 
 scheduler_events = {
 	"hourly": [
-		"gravures_custom.api.e_invoice_recovery.recover_missing_e_invoice_logs"
+		"gravures_custom.api.e_invoice_recovery.recover_all_missing_logs"
 	],
 }
 

@@ -1,108 +1,115 @@
 """
-Hourly recovery job: finds Sales Invoices with IRN set but missing e-Invoice Log,
-fetches data from the e-Invoice portal, and recreates the log.
-
-This guards against the async frappe.enqueue in log_e_invoice() silently losing jobs.
+Recovery: recreate missing e-Invoice Logs and e-Waybill Logs.
+Called via: bench --site kreativ216 execute gravures_custom.api.e_invoice_recovery.recover_all_missing_logs
 """
-
 import json
 
 import frappe
-from frappe.utils import now_datetime
-
-# Guard: only run if india_compliance is installed
-try:
-    import india_compliance  # noqa: F401
-    HAS_IC = True
-except ImportError:
-    HAS_IC = False
 
 
-def recover_missing_e_invoice_logs():
-    """Scheduler entry — hourly. Safe to call on sites without india_compliance."""
-    if not HAS_IC:
-        return
+def recover_all_missing_logs():
+    import jwt as pyjwt
+    from india_compliance.gst_india.api_classes.nic.e_invoice import EInvoiceAPI
 
-    # Find SIs with IRN set but no matching e-Invoice Log
-    missing = frappe.db.sql(
-        """
-        SELECT si.name, si.irn, si.company_gstin, si.docstatus
+    broken = frappe.db.sql("""
+        SELECT si.name, si.irn, si.ewaybill, si.company_gstin,
+               eil.name AS has_einv_log,
+               ewl.name AS has_ewb_log
         FROM `tabSales Invoice` si
         LEFT JOIN `tabe-Invoice Log` eil ON eil.name = si.irn
-        WHERE si.irn IS NOT NULL AND si.irn != ''
-          AND si.docstatus = 1
-          AND eil.name IS NULL
-        ORDER BY si.modified DESC
-        LIMIT 50
-        """,
-        as_dict=True,
-    )
+        LEFT JOIN `tabe-Waybill Log` ewl ON ewl.e_waybill_number = si.ewaybill
+        WHERE si.docstatus = 1
+          AND (
+            (si.irn IS NOT NULL AND si.irn != '' AND eil.name IS NULL)
+            OR
+            (si.ewaybill IS NOT NULL AND si.ewaybill != '' AND ewl.name IS NULL)
+          )
+        ORDER BY si.creation DESC
+    """, as_dict=True)
 
-    if not missing:
-        return
+    if not broken:
+        frappe.logger().info("e-Invoice/e-Waybill recovery: no missing logs found")
+        return {"recovered_einv": 0, "recovered_ewb": 0, "total": 0}
 
     frappe.logger().warning(
-        f"e-Invoice recovery: found {len(missing)} Sales Invoices with missing logs"
+        f"e-Invoice/e-Waybill recovery: found {len(broken)} invoices with missing logs"
     )
 
-    recovered = 0
-    for si in missing:
-        try:
-            _recover_one(si)
-            recovered += 1
-        except Exception:
-            frappe.log_error(
-                title=f"e-Invoice recovery failed for {si.name}",
-                message=frappe.get_traceback(),
-            )
+    recovered_einv = 0
+    recovered_ewb = 0
 
-    if recovered:
-        frappe.logger().info(
-            f"e-Invoice recovery: recovered {recovered}/{len(missing)} logs"
-        )
+    for si in broken:
+        # ── e-Invoice Log recovery ──
+        if si.irn and not si.has_einv_log:
+            try:
+                api = EInvoiceAPI.create(company_gstin=si.company_gstin)
+                result = api.get_e_invoice_by_irn(si.irn)
 
+                if result and not result.get("ErrorDetails"):
+                    invoice_data = None
+                    if result.SignedInvoice:
+                        decoded = json.loads(
+                            pyjwt.decode(result.SignedInvoice, options={"verify_signature": False})["data"]
+                        )
+                        invoice_data = frappe.as_json(decoded, indent=4)
 
-def _recover_one(si):
-    """Fetch e-Invoice data from the NIC portal and create the missing log."""
-    import jwt as pyjwt
-    from india_compliance.gst_india.api_classes.e_invoice import EInvoiceAPI
+                    log = frappe.new_doc("e-Invoice Log")
+                    log.update({
+                        "irn": si.irn,
+                        "reference_doctype": "Sales Invoice",
+                        "reference_name": si.name,
+                        "acknowledgement_number": result.AckNo,
+                        "acknowledged_on": result.AckDt,
+                        "signed_invoice": result.SignedInvoice,
+                        "signed_qr_code": result.SignedQRCode,
+                        "invoice_data": invoice_data,
+                    })
+                    log.save(ignore_permissions=True)
+                    frappe.db.commit()
+                    recovered_einv += 1
+                    frappe.logger().info(f"e-Invoice recovery: created log for {si.name}")
+            except Exception:
+                frappe.log_error(
+                    title=f"e-Invoice recovery failed for {si.name}",
+                    message=frappe.get_traceback(),
+                )
 
-    api = EInvoiceAPI.create(company_gstin=si.company_gstin)
-    result = api.get_e_invoice_by_irn(si.irn)
+        # ── e-Waybill Log recovery ──
+        if si.ewaybill and not si.has_ewb_log:
+            try:
+                if si.irn:
+                    api = EInvoiceAPI.create(company_gstin=si.company_gstin)
+                    result = api.get_e_waybill_by_irn(si.irn)
+                else:
+                    from india_compliance.gst_india.api_classes.nic.e_waybill import EWaybillAPI
+                    api = EWaybillAPI.create(company_gstin=si.company_gstin)
+                    result = api.get_e_waybill(si.ewaybill)
 
-    if not result or result.get("ErrorDetails"):
-        frappe.throw(
-            f"Portal returned error for IRN {si.irn}: {result}"
-        )
+                if result and not result.get("ErrorDetails"):
+                    log = frappe.new_doc("e-Waybill Log")
+                    log.update({
+                        "e_waybill_number": si.ewaybill,
+                        "created_on": result.get("EwbDt") or result.get("ewayBillDate") or result.get("createdDate"),
+                        "valid_upto": result.get("EwbValidTill") or result.get("validUpto"),
+                        "reference_doctype": "Sales Invoice",
+                        "reference_name": si.name,
+                        "is_cancelled": 0,
+                    })
+                    log.save(ignore_permissions=True)
+                    frappe.db.commit()
+                    recovered_ewb += 1
+                    frappe.logger().info(f"e-Waybill recovery: created log for {si.name}")
+            except Exception:
+                frappe.log_error(
+                    title=f"e-Waybill recovery failed for {si.name}",
+                    message=frappe.get_traceback(),
+                )
 
-    # Parse SignedInvoice → invoice_data (same logic as generate_e_invoice)
-    invoice_data = None
-    if result.SignedInvoice:
-        decoded_invoice = json.loads(
-            pyjwt.decode(result.SignedInvoice, options={"verify_signature": False})["data"]
-        )
-        invoice_data = frappe.as_json(decoded_invoice, indent=4)
-
-    log_data = {
-        "irn": si.irn,
-        "reference_doctype": "Sales Invoice",
-        "reference_name": si.name,
-        "acknowledgement_number": result.AckNo,
-        "acknowledged_on": result.AckDt,
-        "signed_invoice": result.SignedInvoice,
-        "signed_qr_code": result.SignedQRCode,
-        "invoice_data": invoice_data,
-    }
-
-    # Create the e-Invoice Log (same as _log_e_invoice)
-    log = frappe.new_doc("e-Invoice Log")
-    log.update(log_data)
-    log.save(ignore_permissions=True)
-    frappe.db.commit()
+    return {"recovered_einv": recovered_einv, "recovered_ewb": recovered_ewb, "total": len(broken)}
 
 
 @frappe.whitelist()
 def trigger_e_invoice_recovery():
     """Manual trigger from desk — shows result summary."""
-    recover_missing_e_invoice_logs()
-    return {"status": "ok", "message": "Recovery job completed. Check Error Log for details."}
+    result = recover_all_missing_logs()
+    return {"status": "ok", "message": f"Recovery completed. e-Invoice: {result['recovered_einv']}, e-Waybill: {result['recovered_ewb']} recovered out of {result['total']} broken."}
