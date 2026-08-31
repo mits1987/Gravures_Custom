@@ -69,6 +69,7 @@ app_include_css = "/assets/gravures_custom/css/kreativ_theme.css"
 app_include_js = [
     "/assets/gravures_custom/js/kreativ_theme_toggle.js?v=20260720",
     "/assets/gravures_custom/js/kg_desk_filter.js",
+    "/assets/gravures_custom/js/print_guard.js?v=20260831",
 ]
 
 # Login page environment marker: injects a "TESTING" banner on non-prod sites.

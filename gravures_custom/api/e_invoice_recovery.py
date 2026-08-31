@@ -86,9 +86,15 @@ def recover_all_missing_logs():
                     result = api.get_e_waybill(si.ewaybill)
 
                 if result and not result.get("ErrorDetails"):
+                    ewb_data = frappe.as_json(
+                        {k: v for k, v in (result if isinstance(result, dict) else result.__dict__).items()
+                         if v is not None and k not in ("ErrorDetails",)},
+                        indent=4,
+                    )
                     log = frappe.new_doc("e-Waybill Log")
                     log.update({
                         "e_waybill_number": si.ewaybill,
+                        "data": ewb_data,
                         "created_on": result.get("EwbDt") or result.get("ewayBillDate") or result.get("createdDate"),
                         "valid_upto": result.get("EwbValidTill") or result.get("validUpto"),
                         "reference_doctype": "Sales Invoice",
@@ -98,7 +104,7 @@ def recover_all_missing_logs():
                     log.save(ignore_permissions=True)
                     frappe.db.commit()
                     recovered_ewb += 1
-                    frappe.logger().info(f"e-Waybill recovery: created log for {si.name}")
+                    frappe.logger().info(f"e-Waybill recovery: created log with data for {si.name}")
             except Exception:
                 frappe.log_error(
                     title=f"e-Waybill recovery failed for {si.name}",
