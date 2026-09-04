@@ -4,18 +4,20 @@
  */
 frappe.provide("gravures_custom.print_guard");
 
-const _orig_get_print_html = frappe.ui.form.PrintView.prototype.get_print_html;
-frappe.ui.form.PrintView.prototype.get_print_html = function (callback) {
-    if (!this.frm.doc) {
-        frappe.model.with_doc(this.frm.doctype, this.frm.docname, () => {
-            this.frm.doc = frappe.get_doc(this.frm.doctype, this.frm.docname);
-            if (this.frm.doc) {
-                _orig_get_print_html.call(this, callback);
-            } else {
-                frappe.msgprint(__("Could not load document. Please refresh."));
-            }
-        });
-        return;
-    }
-    _orig_get_print_html.call(this, callback);
-};
+if (frappe.ui.form.PrintView) {
+    const _orig_get_print_html = frappe.ui.form.PrintView.prototype.get_print_html;
+    frappe.ui.form.PrintView.prototype.get_print_html = function (callback) {
+        if (!this.frm.doc) {
+            frappe.model.with_doc(this.frm.doctype, this.frm.docname, () => {
+                this.frm.doc = frappe.get_doc(this.frm.doctype, this.frm.docname);
+                if (this.frm.doc) {
+                    _orig_get_print_html.call(this, callback);
+                } else {
+                    frappe.msgprint(__("Could not load document. Please refresh."));
+                }
+            });
+            return;
+        }
+        _orig_get_print_html.call(this, callback);
+    };
+}
