@@ -14,6 +14,27 @@ def switch_theme(theme):
 
 
 # ---------------------------------------------------------------------------
+# Number Card graceful degradation
+# ---------------------------------------------------------------------------
+# Frappe v16 enforces field-level permlevel inside SQL SELECT. Number Cards
+# that SUM/AVG a permlevel-2 field (e.g. Sales Order.base_net_total) throw
+# PermissionError for roles without permlevel-2 read (e.g. Production Manager).
+# Those roles must NOT see the sales figure, but the workspace card should not
+# blow up either. Return 0 instead of raising so the card renders blank/zero
+# for unauthorized users while finance roles (with permlevel-2) see real numbers.
+
+@frappe.whitelist()
+def number_card_get_result(doc, filters, to_date=None):
+    """Override for frappe.desk.doctype.number_card.number_card.get_result."""
+    from frappe.desk.doctype.number_card.number_card import get_result as _orig
+
+    try:
+        return _orig(doc, filters, to_date)
+    except frappe.PermissionError:
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Utility helpers (kept for potential use by reports / custom HTML blocks)
 # ---------------------------------------------------------------------------
 

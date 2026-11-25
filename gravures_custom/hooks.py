@@ -7,6 +7,7 @@ app_license = "license"
 
 override_whitelisted_methods = {
     "frappe.core.doctype.user.user.switch_theme": "gravures_custom.overrides.switch_theme",
+    "frappe.desk.doctype.number_card.number_card.get_result": "gravures_custom.overrides.number_card_get_result",
 }
 
 fixtures = [
@@ -135,7 +136,10 @@ update_website_context = [
 
 # before_install = "gravures_custom.install.before_install"
 # after_install = "gravures_custom.install.after_install"
-after_migrate = "gravures_custom.patches.pdf_generator_patch.apply_patch"
+after_migrate = [
+    "gravures_custom.patches.pdf_generator_patch.apply_patch",
+    "gravures_custom.patches.ensure_shopfloor_role_perms.ensure",
+]
 
 # Uninstallation
 # ------------
