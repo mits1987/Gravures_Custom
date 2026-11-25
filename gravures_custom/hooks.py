@@ -139,6 +139,7 @@ update_website_context = [
 after_migrate = [
     "gravures_custom.patches.pdf_generator_patch.apply_patch",
     "gravures_custom.patches.ensure_shopfloor_role_perms.ensure",
+    "gravures_custom.patches.ensure_employee_checkin_allow_copy.ensure",
 ]
 
 # Uninstallation
