@@ -55,7 +55,15 @@ def is_referenced(name):
 	if frappe.db.get_value("Property Setter", {"property": "default_print_format", "value": name}, "name"):
 		return True
 
-	return bool(frappe.db.get_value("Payment Request", {"print_format": name}, "name"))
+	if frappe.db.get_value("Payment Request", {"print_format": name}, "name"):
+		return True
+
+	# Report.default_print_format is a Custom Field, so the column may not exist yet
+	if frappe.db.has_column("Report", "default_print_format"):
+		if frappe.db.get_value("Report", {"default_print_format": name}, "name"):
+			return True
+
+	return False
 
 
 def execute():
