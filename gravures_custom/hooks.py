@@ -140,6 +140,8 @@ after_migrate = [
     "gravures_custom.patches.pdf_generator_patch.apply_patch",
     "gravures_custom.patches.ensure_shopfloor_role_perms.ensure",
     "gravures_custom.patches.ensure_employee_checkin_allow_copy.ensure",
+    "gravures_custom.patches.cleanup_orphan_print_formats.execute",
+    "gravures_custom.patches.fix_print_designer_null_settings.execute",
 ]
 
 # Uninstallation
