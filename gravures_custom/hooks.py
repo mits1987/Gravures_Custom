@@ -140,6 +140,9 @@ after_migrate = [
     "gravures_custom.patches.pdf_generator_patch.apply_patch",
     "gravures_custom.patches.ensure_shopfloor_role_perms.ensure",
     "gravures_custom.patches.ensure_employee_checkin_allow_copy.ensure",
+    # must run before cleanup_orphan_print_formats so the referenced print
+    # format is already linked from Report.default_print_format
+    "gravures_custom.patches.ensure_report_default_print_formats.execute",
     "gravures_custom.patches.cleanup_orphan_print_formats.execute",
     "gravures_custom.patches.fix_print_designer_null_settings.execute",
 ]
